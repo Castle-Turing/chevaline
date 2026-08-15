@@ -52,6 +52,11 @@ spec = "0.1"            # Chevaline spec version this profile targets
 name = "Ada"            # optional; adapters may interpolate into rendered config
 ```
 
+The spec is versioned per [SemVer 2.0.0](https://semver.org) — a
+deliberate choice, since neighboring specs differ (EditorConfig uses
+SemVer, MCP uses dates, AGENTS.md is unversioned). `spec` may omit the
+patch component; `"0.1"` means `0.1.x`.
+
 ### 3.2 Harness preference
 
 ```toml
@@ -79,9 +84,12 @@ harnesses = ["claude-code"]         # optional filter; default: all
 ```
 
 Adapters concatenate applicable blocks, in order, into the harness's native
-instruction channel (e.g. `~/.claude/CLAUDE.md`). Instructions are axis-2 by
-nature (they describe the resident, not any project) and carry no `compose`
-key.
+instruction channel. Where a harness offers an AGENTS.md-compatible
+user-level channel (e.g. Codex's `~/.codex/AGENTS.md`), adapters SHOULD
+prefer it over a proprietary one; if the AGENTS.md convention gains a
+global scope (its issue #91), that becomes the preferred shared target.
+Instructions are axis-2 by nature (they describe the resident, not any
+project) and carry no `compose` key.
 
 ### 3.4 Gates
 
@@ -196,5 +204,10 @@ plugins; the standard does not care.
 - **Secrets/machine-locals** — profiles are public-shaped git repos; whether
   the standard needs a convention for machine-local overlays (dotfiles
   managers solve this; we may just point at them).
-- **Schema formalization** — a JSON Schema / Taplo schema for
-  `chevaline.toml` once the field set stabilizes.
+- **Schema formalization** — a JSON Schema for `chevaline.toml` once the
+  field set stabilizes, validated via Taplo and submitted to SchemaStore.org
+  for zero-setup editor validation.
+- **`~/.agents` ecosystem interop** — early efforts exist in the same niche
+  (dotStandards `.agents`, dot-agents; see `docs/standards.md`). Before
+  v0.2 freezes field names: should adapters also render into `~/.agents/`
+  layouts, and is any of their vocabulary worth adopting?

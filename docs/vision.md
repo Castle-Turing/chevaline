@@ -24,9 +24,14 @@ Adjacent things exist, each missing a piece:
   standardized *content* for agent workflow in that ecosystem.
 - **Per-harness global config** (`~/.claude/`, `~/.codex/`) acknowledges the
   user-level/project-level split, but each is single-harness and proprietary.
+- **`~/.agents`-style efforts** (dotStandards `.agents`, dot-agents) are the
+  closest neighbors — user-scoped and cross-tool — but early-stage and
+  without the governance-vs-preference composition model that shapes this
+  schema. Tracked in [standards.md](standards.md).
 
-Nothing sits at the intersection: user-owned *and* harness-agnostic *and*
-content-standardized. Chevaline is that intersection.
+Nothing sits fully at the intersection: user-owned *and* harness-agnostic
+*and* content-standardized *and* explicit about composing with project
+governance. Chevaline is that intersection.
 
 ## The two-axis distinction
 
@@ -59,6 +64,18 @@ mode** rather than an implicit assumption. There is deliberately no
    harness's native config. The standard specifies the input contract and
    stays silent on how adapters run. Adapters must not silently drop what
    they cannot render.
+5. **Honor prior art.** Chevaline exists because nothing else sits at its
+   intersection — not because the neighbors are wrong. Where an existing or
+   emerging convention already expresses something the schema needs, map to
+   it rather than compete with it: render *into* native and shared surfaces
+   (AGENTS.md-style instruction channels, each harness's own config), build
+   *on* standard formats and practices (TOML, SemVer, JSON Schema), and
+   track the neighbors so convergence is deliberate. Concretely: every
+   schema field must answer "why isn't this an existing standard?", and
+   [standards.md](standards.md) is the living ledger of adjacent standards,
+   Chevaline's stance toward each, and audits of the spec against this
+   principle. A field that duplicates something the ecosystem has since
+   standardized is a bug, not a feature.
 
 ## Non-goals
 
