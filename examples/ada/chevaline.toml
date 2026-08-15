@@ -1,0 +1,57 @@
+# Ada's Chevaline profile — a fictional reference example.
+# Exercises every section of SPEC.md §3.
+
+spec = "0.1"
+
+[resident]
+name = "Ada"
+
+# Try Claude Code first; fall back to Codex if it isn't available.
+[harnesses]
+prefer = ["claude-code", "codex"]
+
+# Portable prose, concatenated into whatever instruction channel the
+# harness's adapter renders into.
+[[instructions]]
+path = "instructions/communication.md"
+
+[[instructions]]
+path = "instructions/testing-habits.md"
+harnesses = ["claude-code"]   # Ada only wants this one read by Claude Code
+
+# A standing check on Ada's own work. This is the canonical axis-1
+# collision case, so compose is stated explicitly rather than left to
+# the default.
+[[gates]]
+id = "second-model-review"
+on = "merge"
+description = "Get a second model's review before merging"
+compose = "layer"
+run = "scripts/second-opinion.py"
+
+# Ada wants a fresh worktree per session, but defers to a project's own
+# contribution flow when it already has one.
+[sessions]
+isolation = "worktree"
+compose = "defer"
+
+# How much latitude Ada's own agents get, per action class. Authority only
+# tightens; it never loosens anything a project or harness already
+# restricts.
+[authority]
+default = "reported"
+
+[authority.actions]
+"fs.write" = "silent"
+"vcs.commit" = "reported"
+"vcs.push" = "approval"
+"vcs.publish" = "approval"
+"deps.change" = "approval"
+"net.fetch" = "silent"
+"exec.install" = "approval"
+
+# Executable content Ada uses to orchestrate her own agents.
+[[extensions]]
+id = "orchestrator"
+run = "scripts/orchestrate.py"
+description = "Fan out a task across several agent sessions"
