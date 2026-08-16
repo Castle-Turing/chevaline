@@ -181,9 +181,12 @@ models = { cheap = "qwen2.5-coder", deep = "llama-3.3-405b" }
 ```
 
 The tier vocabulary is `cheap`, `standard`, and `deep`, plus `x.`-prefixed
-custom tiers that adapters may ignore. Three tiers reflects real
-convergence: Codex ships `cheap`/`standard`/`deep` profiles and the
-haiku/sonnet/opus split is the same shape.
+custom tiers that adapters may ignore. Three tiers reflects a recurring
+shape rather than an established standard: the haiku/sonnet/opus split has
+it, and configurations in the wild reach for it too (compass names its
+Codex profiles `cheap`/`standard`/`deep`, though those names are its own —
+Codex supplies the profile mechanism, not the vocabulary). The names are
+therefore ours to choose, and are under review (§5).
 
 A tier maps to **whatever knob the harness actually has**, which is why it
 is the portable unit and a model identifier is not. Where a harness offers
