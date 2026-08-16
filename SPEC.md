@@ -354,6 +354,23 @@ extension (slash command, hook, manual run) is adapter-defined. Extensions
 exist in the schema now so the standard's shape accommodates them; the
 protocol is future work.
 
+> **This section is under review and is the most likely part of v0.2 to
+> change.** The [Agent Skills standard](https://agentskills.io/specification)
+> already defines a portable format for exactly this — a directory with a
+> `SKILL.md` (YAML frontmatter plus instructions) and optional `scripts/`,
+> `references/`, and `assets/` — and it is read by 32+ harnesses. Under
+> Principle 5, `[[extensions]]` has to justify defining a parallel
+> `id`/`run`/`description` triple, and it currently cannot.
+>
+> What Agent Skills does *not* specify is where skills live or how a person
+> installs the ones they want across every tool: it standardizes the unit,
+> not the resident's collection of them. That gap is Chevaline's, which
+> makes the two complementary. The expected resolution is that
+> `[[extensions]]` references skill directories in `SKILL.md` format and
+> adapters install them into each harness's skill location — which dissolves
+> the invocation-protocol question rather than answering it. Not yet
+> redesigned; see `docs/standards.md`.
+
 ## 4. Adapter contract
 
 An adapter, given the path to a profile repo, MUST:
@@ -408,10 +425,15 @@ cap that silently fails to bind is worse than no cap at all.
   a project has an axis-1 stance (needed for `defer`/`insist` to be more
   than best-effort). Candidate: recognize AGENTS.md and per-harness project
   config as opinion signals.
-- **Extension invocation protocol** — arguments, environment, and lifecycle
-  for `[[extensions]]` entrypoints, and whether a gate's `run` script follows
-  the same protocol (the two fields are the same shape; their relationship is
-  currently unstated).
+- **Adopt Agent Skills for `[[extensions]]`** (supersedes the former
+  "extension invocation protocol" question). Rather than specify arguments,
+  environment, and lifecycle ourselves, reference `SKILL.md` directories and
+  let adapters install them. Open sub-questions: whether a gate's `run`
+  script also becomes a skill or stays a plain entrypoint; whether a profile
+  bundles skill directories in-repo, references them by path, or both; and
+  whether §3.9 authority should adopt the `allowed-tools` pattern syntax
+  (`Bash(git:*) Read`) instead of inventing a third spelling for the same
+  idea.
 - **Harness name registry** — §3.3 disclaims a registry, but exact-string
   matching in §3.6 and §4 creates one by convention. A non-normative list of
   known names ("claude-code", "codex", …) would reduce typo-drift.

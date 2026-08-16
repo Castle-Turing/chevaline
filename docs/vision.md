@@ -75,7 +75,10 @@ mode** rather than an implicit assumption. There is deliberately no
    [standards.md](standards.md) is the living ledger of adjacent standards,
    Chevaline's stance toward each, and audits of the spec against this
    principle. A field that duplicates something the ecosystem has since
-   standardized is a bug, not a feature.
+   standardized is a bug, not a feature. The ledger carries two obligations,
+   because re-auditing known entries can never catch the standard nobody
+   listed: **audit** existing verdicts when the spec moves, and **discover**
+   on a dated schedule by actually searching for what is new.
 
 ## Non-goals
 

@@ -13,6 +13,34 @@ Verdicts: **adheres** / **gap** (with the fix) / **justified divergence**
 (with the reason). Re-audit whenever the spec version bumps or a tracked
 standard moves. Last audited: 2026-08-15, against spec v0.2 draft.
 
+## Process: audit *and* discovery
+
+Re-auditing only re-examines standards already listed here, so on its own it
+can never catch the failure that matters most — a standard we never knew
+about. That failure has already happened twice: the `~/.agents` ecosystem
+and Agent Skills were both found by accident, after the spec had shipped
+fields that overlapped them.
+
+So this ledger has two obligations, not one:
+
+- **Audit** — re-check every entry's verdict when the spec version bumps or
+  a tracked standard moves.
+- **Discover** — a dated search pass for standards *not* yet listed, run at
+  every minor spec bump and no less than quarterly. Record the date and the
+  ground covered below even when it turns up nothing, so gaps in the sweep
+  are visible rather than assumed.
+
+Ground to re-sweep each pass: agent instruction conventions, user-level
+config surfaces for any newly popular harness, agent capability/packaging
+formats, permission and authority vocabularies, and anything occupying the
+personal-cross-tool-profile niche.
+
+| Discovery pass | Ground covered | Found |
+|---|---|---|
+| 2026-08-15 | prior-art survey for v0.1 | AGENTS.md, EditorConfig, dotfiles managers, per-harness config |
+| 2026-08-15 | adjacent-standards sweep for v0.2 | `~/.agents` ecosystem, MCP tool annotations, Taplo/SchemaStore |
+| 2026-08-15 | prompted by "are we reinventing Pi?" | **Agent Skills**, Pi |
+
 ## AGENTS.md — stance: render into + track
 
 Open Markdown convention for agent instructions, stewarded by the Agentic
@@ -37,6 +65,51 @@ exists.
 rendered into native channels, which is the right shape. Action: the
 adapter contract should name AGENTS.md-compatible channels as the
 preferred instruction target where a harness offers one.
+
+## Agent Skills (`SKILL.md`) — stance: build on
+
+An open standard for packaging a reusable agent capability, published by
+Anthropic on 2025-12-18 and specified at
+[agentskills.io/specification](https://agentskills.io/specification)
+([repo](https://github.com/anthropics/skills)). A skill is a directory
+containing a required `SKILL.md` — YAML frontmatter plus Markdown body —
+and optional `scripts/`, `references/`, and `assets/` subdirectories.
+Frontmatter is `name` and `description` (required), with optional
+`license`, `compatibility`, `metadata`, and the experimental
+`allowed-tools`. Agents load it progressively: metadata at startup, body on
+activation, bundled files on demand. A reference validator (`skills-ref`)
+exists.
+
+Adoption is the widest of anything in this ledger: Microsoft and OpenAI
+shipped support within 48 hours of publication, and it crossed 32 tools by
+March 2026 — Claude Code, Cursor, Codex CLI, Gemini CLI, Copilot, JetBrains
+Junie, AWS Kiro, Goose, and Google Antigravity among them.
+
+**The nuance that decides our stance:** the specification standardizes the
+*package format* and says nothing about where skills live on disk or how a
+person installs the ones they want everywhere. There is no user-level
+versus project-level distinction in it at all — discovery is left entirely
+to implementations. That omission is precisely Chevaline's niche, so the
+two are complementary rather than competing: Agent Skills defines the unit,
+Chevaline says which units a *resident* carries and renders them into each
+harness's skill location.
+
+**Verdict: gap.** `[[extensions]]` (SPEC §3.10) invents an
+`id`/`run`/`description` triple for referencing executable content and
+defers an invocation protocol to future work — while an adopted standard
+for exactly that already exists. This is Principle 5's "a field that
+duplicates something the ecosystem has standardized is a bug" firing
+against our own schema. Fix: `[[extensions]]` should reference skill
+directories in `SKILL.md` format rather than define a parallel one, which
+also collapses the "extension invocation protocol" open question instead of
+answering it. Reopened in SPEC §3.10 and §5; not yet redesigned.
+
+**Second finding, for the authority section.** The `allowed-tools` field
+carries values like `Bash(git:*) Bash(jq:*) Read` — the pattern-scoped
+permission syntax that SPEC §3.9 currently lacks and that the compass
+review flagged as a gap. There is now prior art for that syntax inside an
+open standard, so §3.9's eventual pattern support should match it rather
+than invent a third spelling.
 
 ## `~/.agents`-style profiles — stance: track (closest neighbors)
 
@@ -71,6 +144,32 @@ The adapter output targets, as of mid-2026:
 | Codex CLI | `~/.codex/AGENTS.md` | `~/.codex/config.toml` (`approval_policy`) |
 | Cursor | User Rules (`~/.cursor`) | — |
 | Gemini CLI | `~/.gemini/GEMINI.md` | `~/.gemini/settings.json` |
+| Pi | `prompts` resource in settings | `~/.pi/agent/settings.json` |
+
+[Pi](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/README.md)
+(earendil-works/pi) is a harness, not a competing standard — it belongs in
+this table for the same reason Claude Code does. Its
+[settings](https://pi.dev/docs/latest/settings) carry model and
+`thinkingBudgets`, plus `packages`, `extensions`, `skills`, `prompts`, and
+`themes` as declared resources. Two observations worth keeping:
+
+- **Pi resolves the axis question the opposite way we do.** It reads a
+  global `~/.pi/agent/settings.json` and a project `.pi/settings.json`,
+  and "project settings override global settings." Plain override is the
+  mode Chevaline deliberately excluded (SPEC §2.2). That does not
+  invalidate our reasoning — Pi's project file is closer to axis-1
+  governance, where winning is defensible — but it does mean
+  `layer`/`defer`/`insist` is the unusual claim in this ecosystem and has
+  to earn its keep rather than be assumed.
+- **Its merge rule matches ours.** "Nested objects are merged" while
+  values replace — the same semantics SPEC §2.1 fixed for environment
+  overlays, arrived at independently.
+
+Also note that personal Pi config repos already exist in the wild
+([one example](https://github.com/LEUNGUU/pi-agent-config), described as
+"personal configuration … for cross-environment sync"). That is Chevaline's
+thesis emerging on its own, and confined to a single harness — evidence the
+demand is real and the gap is real.
 
 **Verdict: adheres.** This is what the adapter contract exists for.
 
