@@ -111,9 +111,11 @@ unexamined for a day.
 ### Actions taken
 
 - **Adopt the null-model read as a standing gate.** Run an unstructured
-  "what is wrong with this?" pass against the full spec at every version
-  bump, before any structured review. Highest yield per token observed by a
-  wide margin, and it costs less than writing one RFC.
+  "what is wrong with this?" pass against the full spec **after any
+  substantial edit pass**, not only at version bumps — see Experiment 1b,
+  where a correction pass introduced roughly four new defects and the gate
+  caught them immediately. Highest yield per token observed by a wide
+  margin, and it costs less than writing one RFC.
 - **Narrow the RFC process's claim.** It is not a finder of internal
   contradictions and should stop being justified as one. Its remaining
   claim — preventing premature normativity and organising external evidence
@@ -127,6 +129,64 @@ noise, but a second run with a different model would strengthen it, and the
 null model's own findings each need verification before being treated as
 defects — claim 5 was verified here, claim 6 is self-evident, the rest are
 argued from the document and look sound but are unchecked.
+
+## Experiment 1b — the same read against the corrected spec (2026-08-16)
+
+**Setup.** All eight defects from Experiment 1 were fixed, producing v0.3.
+The corrected spec was then given to a fresh model with the identical
+unstructured prompt. Same cost profile: one prompt, one tool call, ~35k
+tokens.
+
+**Result: nine more defects — and roughly half were introduced by the
+correction pass itself.**
+
+Introduced by the fix:
+
+- The §3.4 example still used the old `[environment.work]` syntax, which
+  the same document had just spent a paragraph rejecting. The spec's own
+  worked example for a headline feature would not have parsed as intended.
+- §3.9 still contained the verbatim sentence ("carries no `compose` key")
+  that §2.2 had just been rewritten to identify as a defect. The two
+  sections asserted opposite things in a draft claiming to have fixed
+  exactly that.
+- `[models]` was given a `restrict` default that violates the eligibility
+  rule written three sections earlier in the same pass — `restrict`
+  requires a stated ordering, and a tier-to-identifier map has none.
+
+Pre-existing, missed by round one:
+
+- Authority's unconditional stricter-wins guarantee depends on
+  project-opinion detection, which §2.2 declares out of scope — the
+  strongest safety claim in the spec is its least verifiable.
+- "Activated explicitly by an adapter" named a mechanism defined nowhere.
+- The unknown-selector version rule assumes newer versions only *add*
+  selectors, which SemVer explicitly does not license within `0.x`.
+- `git_org` never said which remote it reads.
+
+### Interpretation
+
+This is the more useful of the two experiments, and it changes the
+recommendation from "worth doing" to "load-bearing."
+
+**A correction pass is itself a defect-generating event, at a rate high
+enough to matter.** Fixing eight defects introduced roughly four — several
+of them internal contradictions created by editing one section and not its
+counterpart, which is precisely the failure a whole-document read catches
+and a section-by-section edit cannot. The author is the worst-placed
+reader of a document they just changed.
+
+The standing-gate decision from Experiment 1 was adopted on yield-per-token
+grounds. It is better justified on this: **the gate caught its own
+predecessor's mistakes within minutes of them being made.** Running it only
+at version bumps is now too infrequent — it should run after any
+substantial edit pass, not only at a release boundary.
+
+One finding was disputed rather than accepted. The reviewer read RFC 0001
+as re-deriving the axis-1/axis-2 distinction that the founding brief marks
+settled. It does not — it adds an orthogonal third input rather than
+revisiting the original two — but §5's table described it as convicting
+"the two-axis framing," which invited exactly that reading. The wording was
+the defect, not the RFC.
 
 ## Proposed Experiment 2 — defect injection
 

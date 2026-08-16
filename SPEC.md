@@ -1,4 +1,4 @@
-# Chevaline specification — v0.2 (draft)
+# Chevaline specification — v0.3 (draft)
 
 Chevaline is a directory convention plus a manifest schema. A **profile** is
 a git repo implementing this spec. A **resident** is the person the profile
@@ -41,9 +41,18 @@ environments will apply the wrong values.
 Environments are declared in §3.2 and merged onto the base manifest in
 declaration order — a later matching environment wins over an earlier one.
 
+**Environments are an array of tables (`[[environment]]`) precisely because
+TOML guarantees array order and does not guarantee table order.** The TOML
+specification maps a document to a hash table and requires no parser to
+preserve the declaration order of named tables. A `[environment.work]` form
+would therefore have made this entire mechanism depend on an implementation
+detail — one that happens to hold in Python and need not hold in another
+language. Ordering is load-bearing here, so it is expressed in the one
+construct the format actually guarantees.
+
 Merge semantics, which must not be guessed at:
 
-- **Tables merge recursively.** `[environment.work.models]` naming only
+- **Tables merge recursively.** An environment's `models` table naming only
   `cheap` overrides that tier and leaves `standard` and `deep` inherited
   from the base.
 - **Scalars and arrays replace wholesale.** There is no element-wise array
@@ -61,6 +70,24 @@ Two rules make this fail-safe:
   and the adapter MUST report it (§4). Silently ignoring a selector would
   make an environment match in situations the resident excluded.
 
+An unknown selector is either a typo or a selector from a spec version
+newer than the adapter, and those deserve opposite treatment: forward
+compatibility for the second, a loud failure for the first. **The declared
+`spec` version distinguishes them.** If the profile declares a version
+*newer* than the adapter implements, an unrecognized selector is a warning
+and the environment simply does not match. If the profile's version is one
+the adapter fully implements, the selector cannot be from the future, so it
+is a validation **error** — because silently rendering an environment
+permanently inert is a worse outcome than refusing to run.
+
+This rule assumes newer versions only *add* selectors. SemVer permits
+breaking changes throughout `0.x`, so a selector renamed in a later `0.x`
+release would be treated as a forward-compatible unknown and silently fail
+to match — the opposite of the intended fail-safe. Until `1.0`, therefore:
+**a selector MUST NOT be renamed or removed within `0.x` without also being
+listed in a deprecations note**, and adapters SHOULD surface any
+forward-compatible unknown prominently rather than as a quiet warning.
+
 Environments are axis-2 only. A `when.path` or `when.git_org` selector may
 *reference* a project, but what it selects is still the resident's own
 preference — it binds nobody else and is not project governance.
@@ -68,36 +95,62 @@ preference — it binds nobody else and is not project governance.
 ### 2.2 Axis composition modes
 
 Any preference that a project's own governance (axis 1) could also have an
-opinion about carries an explicit `compose` key. Modes, defined once and
-used everywhere:
+opinion about carries an explicit `compose` key. Four modes:
 
-- **`layer`** (default) — the preference adds on top of whatever the project
+- **`layer`** — the preference adds on top of whatever the project
   requires. Project gates still run; this one runs too.
 - **`defer`** — apply only if the project has no opinion of its own in this
   area; otherwise the project's convention is used and this preference is
   ignored.
 - **`insist`** — if the project's convention conflicts, do not silently
   yield *or* override: surface the conflict to the resident and wait.
+- **`restrict`** — both opinions apply and the **more restrictive one
+  wins**. Valid only where the preference is a permission or a limit, so
+  that "more restrictive" is defined by a stated ordering.
 
 There is deliberately no `override` mode. A resident preference never
 overrides project governance; `insist` — "stop and tell me" — is the
 strongest expressible stance.
 
+**Not every mode is valid everywhere, and the default differs by shape.**
+This is the correction of an earlier defect in which `layer` was declared
+the universal default and then applied to a setting where it is meaningless:
+
+| Preference shape | Valid modes | Default |
+|---|---|---|
+| Additive (a set of checks, e.g. gates) | `layer`, `defer`, `insist` | `layer` |
+| Single-valued (an enum or scalar, e.g. session isolation) | `defer`, `insist` | `defer` |
+| Permission or limit (authority) | `restrict` | `restrict` |
+
+`layer` is incoherent for a single-valued setting: there is no sense in
+which a resident's `worktree` preference "also runs" alongside a project's
+`in-place` convention. Any section whose value is a single choice therefore
+takes `defer` or `insist` only, and omitting `compose` there means `defer`.
+
 How an adapter *detects* a project opinion is harness-specific and out of
-scope for v0.2; the modes define the required behavior once a conflict is
+scope for v0.3; the modes define the required behavior once a conflict is
 known.
 
-Sections that carry no `compose` key are axis-2 only, because axis 1 has no
-standing to have an opinion: instructions (§3.6) describe the resident,
-authority (§3.9) can only tighten, and budget (§3.5) is the resident's own
-wallet.
+**Sections that carry no `compose` key**, and why:
+
+- **Instructions (§3.6)** — they describe the resident, not the work.
+- **Budget (§3.5)** — a project has no standing to spend the resident's
+  money or quota.
+
+Authority (§3.9) is *not* in this list. It composes with `restrict`
+implicitly and always — a project or platform restriction that is stricter
+than the resident's wins. An earlier draft claimed authority carried no
+`compose` key because "axis 1 has no standing to have an opinion," which
+contradicted §3.9's own rule that the effective permission is the stricter
+of the two axes. Naming `restrict` resolves that: axis 1 plainly does have
+an opinion, and it wins when it is tighter.
 
 ## 3. Manifest schema
 
 ### 3.1 Header
 
 ```toml
-spec = "0.2"            # Chevaline spec version this profile targets
+spec = "0.3"            # Chevaline spec version this profile targets
 
 [resident]
 name = "Ada"            # optional; adapters may interpolate into rendered config
@@ -106,7 +159,10 @@ name = "Ada"            # optional; adapters may interpolate into rendered confi
 The spec is versioned per [SemVer 2.0.0](https://semver.org) — a
 deliberate choice, since neighboring specs differ (EditorConfig uses
 SemVer, MCP uses dates, AGENTS.md is unversioned). `spec` may omit the
-patch component; `"0.2"` means `0.2.x`.
+patch component; `"0.3"` means `0.3.x`.
+
+The declared version is also what lets an adapter tell a typo from a
+forward-compatible unknown (§2.1), so it is not decoration.
 
 ### 3.2 Environments
 
@@ -116,14 +172,20 @@ resident's token budget at work is not their budget at home — while most
 preferences should travel unchanged.
 
 ```toml
-[environment.work]
+[[environment]]
+name = "work"
 when.git_org = "acme"           # predicates AND together
 when.path = "~/work/**"
 
-[environment.work.budget]
-on_exceed = "halt"
-limits = [ { scope = "*", window = "session", amount = 2_000_000, unit = "tokens" } ]
+  [environment.budget]
+  on_exceed = "halt"
+  limits = [ { scope = "*", window = "session", amount = 2_000_000, unit = "tokens" } ]
 ```
+
+An array of tables, not named tables — see §2.1. `name` is required and
+must be unique; it is what `explain` output and error messages refer to.
+Sub-tables of an array element belong to the most recently declared
+element, which is why a second `[[environment]]` header starts a new one.
 
 Selectors, a closed set:
 
@@ -135,14 +197,24 @@ Selectors, a closed set:
 | `env` | an environment variable, as `"NAME=value"` |
 
 All predicates in a `when` block must hold for the environment to apply. An
-environment with no `when` block never matches automatically and can only be
-activated explicitly by an adapter.
+environment with no `when` block never matches automatically.
+
+Adapters MAY support **explicit activation** — selecting an environment by
+`name`, e.g. a `--environment work` flag or an equivalent setting. Where
+offered, explicit activation bypasses `when` entirely and is the only way a
+`when`-less environment ever applies. It is optional, and an adapter that
+does not offer it simply never applies such environments.
+
+`git_org` reads the `origin` remote specifically. A repository may have
+several remotes and matching must not depend on which one an adapter
+happened to pick.
 
 `env` is the universal escape hatch. A resident whose environments really
 track a *credential* — a work API key vs. a personal one — sets the variable
 alongside the key in the shell profile or direnv file where the key already
-lives, rather than putting anything credential-shaped in a profile repo that
-is public by convention.
+lives. Credentials do not belong in a profile repo whether or not it is
+published, because a private repo still syncs across machines and still
+lands in backups.
 
 An environment may override any section below except the header. Prior art
 for this pattern is well established and Chevaline deliberately borrows
@@ -157,11 +229,16 @@ selector set stays closed and declarative on purpose.
 ```toml
 [harnesses]
 prefer = ["claude-code", "codex"]   # ordered; first available wins
+compose = "defer"                   # single-valued in effect; defer is the default
 ```
 
-Names are lowercase kebab-case identifiers. v0.2 does not maintain a
+Names are lowercase kebab-case identifiers. v0.3 does not maintain a
 registry; adapters match their own name and ignore the rest. An empty or
 absent list means "no preference."
+
+Harness choice carries `compose` because a project can legitimately require
+a particular tool — a plugin or check that exists for one harness only. The
+resident's ordering is a preference, not a veto, so it defers by default.
 
 ### 3.4 Models and tiers
 
@@ -176,7 +253,8 @@ cheap    = "claude-haiku-4-5"
 standard = "claude-sonnet-4-5"
 deep     = "claude-opus-4-5"
 
-[environment.work]
+[[environment]]
+name = "work"
 models = { cheap = "qwen2.5-coder", deep = "llama-3.3-405b" }
 ```
 
@@ -187,6 +265,17 @@ it, and configurations in the wild reach for it too (compass names its
 Codex profiles `cheap`/`standard`/`deep`, though those names are its own —
 Codex supplies the profile mechanism, not the vocabulary). The names are
 therefore ours to choose, and are under review (§5).
+
+`[models]` carries `compose`, defaulting to **`defer`**. A project may
+legitimately forbid a model family on compliance grounds — no third-party
+inference over this codebase — and where it does, its rule governs.
+
+`restrict` is deliberately *not* the default here despite the prohibition
+being restriction-shaped, because §2.2 admits `restrict` only where "more
+restrictive" is defined by a stated ordering, and a tier-to-identifier
+mapping has no such ordering. Making model prohibitions properly
+composable likely means expressing them as authority over model families
+rather than as a mode on this section; tracked in RFC 0004.
 
 A tier maps to **whatever knob the harness actually has**, which is why it
 is the portable unit and a model identifier is not. Where a harness offers
@@ -220,8 +309,17 @@ limits = [
   currency code, or an `x.`-prefixed custom unit. There is **no default**:
   an omitted unit is invalid, so that no currency is privileged by the
   schema and no profile silently means dollars.
-- **`on_exceed`** — `halt` stops before the next model call; `warn` reports
-  and continues. Both exist because real credit systems have both.
+- **`on_exceed`** — `halt` blocks further model calls once a limit is
+  observed to be exhausted; `warn` reports and continues. Both exist
+  because real credit systems have both.
+
+**`halt` cannot be tighter than the usage reporting allows.** Usage is
+provider-reported and therefore known only after a call completes, so the
+call that crosses a threshold always finishes; the halt takes effect on the
+*next* one. A limit can therefore be overshot by at most one call, and
+residents sizing a cap should account for that. An earlier draft promised a
+halt "before the next model call," which read as a tighter guarantee than
+provider-reported usage can support.
 
 Three semantics that must not be guessed at:
 
@@ -303,12 +401,16 @@ though it defaults to `layer` — profiles are encouraged to state it.
 ```toml
 [sessions]
 isolation = "worktree"              # worktree | branch | in-place | container
-compose = "defer"
+compose = "defer"                   # defer | insist; defer if omitted
 ```
 
-`defer` is the sensible default here: many projects already mandate a
-contribution flow, and session isolation is exactly the kind of convention a
-project may own.
+`isolation` is single-valued, so per §2.2 only `defer` and `insist` are
+valid and **`defer` applies when `compose` is omitted**. That is also the
+sensible choice: many projects already mandate a contribution flow, and
+session isolation is exactly the kind of convention a project may own.
+`layer` is rejected here rather than merely discouraged — there is no
+meaning to a resident's `worktree` running "in addition to" a project's
+`in-place`.
 
 ### 3.9 Authority
 
@@ -331,13 +433,23 @@ default = "reported"
 "exec.install" = "approval"  # installing tools onto the machine
 ```
 
-v0.2 defines the namespaced classes above as a starting vocabulary; profiles
-may add custom `x.`-prefixed classes, which adapters may ignore. Authority is
-axis-2 only (it constrains the resident's own agents; it can tighten but
-never loosen anything a project or harness already restricts), so it carries
-no `compose` key — the effective permission is the *stricter* of the two
-axes, always. Strictness is totally ordered:
-`silent` < `reported` < `approval`.
+v0.3 defines the namespaced classes above as a starting vocabulary; profiles
+may add custom `x.`-prefixed classes, which adapters may ignore.
+
+**Authority composes with `restrict`, always, and the mode is not
+settable.** Writing a `compose` key here is an error rather than a
+preference: authority can tighten but never loosen what a project or
+harness already restricts, so the effective permission is the stricter of
+the two axes and no profile may opt out of that. Strictness is totally
+ordered: `silent` < `reported` < `approval`.
+
+That guarantee currently rests on a mechanism this document does not
+define. §2.2 puts project-opinion detection out of scope for v0.3, so
+nothing here says how an adapter learns what axis 1 restricts — which makes
+the spec's strongest safety claim its least verifiable one. An adapter that
+cannot determine the project's restrictions MUST apply the resident's
+authority and report that it could not compose, rather than implying a
+guarantee it did not check. Tracked in RFC 0005.
 
 ### 3.10 Extensions (executable content)
 
@@ -349,20 +461,22 @@ their own agents.
 id = "orchestrator"
 run = "scripts/orchestrate.py"
 description = "Fan out a task across several agent sessions"
+compose = "defer"                   # a project may forbid arbitrary scripts
 ```
 
-v0.2 deliberately specifies only *identification* (an id, an entrypoint, a
+v0.3 deliberately specifies only *identification* (an id, an entrypoint, a
 description), not an invocation protocol — how a harness exposes an
 extension (slash command, hook, manual run) is adapter-defined. Extensions
 exist in the schema now so the standard's shape accommodates them; the
 protocol is future work.
 
-> **This section is under review and is the most likely part of v0.2 to
+> **This section is under review and is the most likely part of v0.3 to
 > change.** The [Agent Skills standard](https://agentskills.io/specification)
 > already defines a portable format for exactly this — a directory with a
 > `SKILL.md` (YAML frontmatter plus instructions) and optional `scripts/`,
 > `references/`, and `assets/` — and it is read by 32+ harnesses. Under
-> Principle 5, `[[extensions]]` has to justify defining a parallel
+> Principle 5 (`docs/vision.md` — honor prior art), `[[extensions]]` has to
+> justify defining a parallel
 > `id`/`run`/`description` triple, and it currently cannot.
 >
 > What Agent Skills does *not* specify is where skills live or how a person
@@ -385,8 +499,14 @@ An adapter, given the path to a profile repo, MUST:
    it. "Why is my cap this number?" must have an answer.
 3. **Render idempotently** into the harness's native config — running twice
    produces the same result, and re-running after a profile change updates
-   the rendered output. Rendered regions must be delimited (e.g. marker
-   comments) so they never clobber config the resident wrote by hand.
+   the rendered output. Rendered regions must be **identifiable**, so that
+   re-rendering never clobbers config the resident wrote by hand. Marker
+   comments are the obvious mechanism where the format has comments; **they
+   are not available in JSON**, and Claude Code's `settings.json` is JSON.
+   An adapter targeting a comment-less format MUST instead record the keys
+   it owns in a sidecar manifest alongside the rendered file, and touch only
+   those keys on re-render. An earlier draft mandated marker comments
+   outright, which was unsatisfiable for the first named target.
 4. **Honor composition modes** as defined in §2.2 for every field that
    carries one.
 5. **Report what it skipped.** A field the harness cannot express is
@@ -398,9 +518,14 @@ An adapter, given the path to a profile repo, MUST:
 Budget carries stricter obligations than the rest of the schema, because a
 cap that silently fails to bind is worse than no cap at all.
 
-- **`tokens` support is mandatory.** Token limits require nothing but the
-  usage figures a provider already returns, so every adapter can enforce
-  them.
+- **`tokens` support is mandatory to *represent*, conditional to
+  *enforce*.** Every adapter MUST accept and correctly resolve token
+  limits. Enforcement is a different obligation: "stop making calls" is a
+  runtime behavior, and a pure config-renderer — the kind §4 otherwise
+  describes — has no way to perform it. Such an adapter is **not
+  non-conformant**; it is a non-enforcing adapter, and MUST declare itself
+  as one. An earlier draft issued a flat mandatory-enforcement MUST that
+  §5's own renderer-versus-mechanism entry admitted was impossible.
 - **Currency support is optional, and must show its work.** Enforcing a
   currency limit requires a pricing table, which is external data that goes
   stale. An adapter that supports currency units MUST disclose the pricing
@@ -414,7 +539,7 @@ cap that silently fails to bind is worse than no cap at all.
   profile as enforced. Running uncapped while appearing capped is the
   failure mode this section exists to prevent.
 
-## 5. Open questions (tracked, not resolved in v0.2)
+## 5. Open questions (tracked, not resolved in v0.3)
 
 Substantive proposals now live as RFCs in [`docs/rfcs/`](docs/rfcs/), so
 that a claim can be argued before it becomes normative. Several sections
@@ -425,7 +550,7 @@ current thinking.
 
 | RFC | Convicts |
 |---|---|
-| [0001](docs/rfcs/0001-workflow-as-third-input.md) | the two-axis framing; §3.7 gates; §3.10 |
+| [0001](docs/rfcs/0001-workflow-as-third-input.md) | §3.7 gates; §3.10 — *extends* the axis model with a third input; does not revisit the axis-1/axis-2 distinction, which is settled |
 | [0002](docs/rfcs/0002-two-dimensional-authority.md) | §3.9 — conflates permission with reporting, and has no `deny` |
 | [0003](docs/rfcs/0003-budget-enforcement-model.md) | §3.5, §4.1 — `window` does not say across what, so the aggregate limit does not aggregate |
 | [0004](docs/rfcs/0004-logical-model-roles.md) | §3.4 — one axis is not enough, and supersedes the tier-naming question |
