@@ -119,6 +119,20 @@ the RFC — `How this gets decided` does that, with evidence. Review's job is
 to save you from gathering evidence on a broken design, not to substitute
 for the evidence.
 
+### Generating a review packet
+
+`tools/rfc-review.py` turns an RFC into a self-contained packet ready to
+paste to a model reviewer: framing, what the reviewer is and is not
+seeing, the RFC body, its assigned questions, and the comment template.
+
+    python3 tools/rfc-review.py 0003
+
+Comments are excluded by default (`--with-comments` restores them) because
+prior comments anchor later reviewers into agreeing with them.
+`--split N` divides the questions round-robin across N packets so
+different reviewers see different questions, per "distribute rather than
+pool" above.
+
 ### Record format
 
 ```markdown
