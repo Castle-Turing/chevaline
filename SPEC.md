@@ -416,38 +416,41 @@ cap that silently fails to bind is worse than no cap at all.
 
 ## 5. Open questions (tracked, not resolved in v0.2)
 
-- **Renderer vs. mechanism** — §4 assumes every preference renders into a
-  native config file, but budget disproves it: no harness config expresses
-  "halt before the next model call," so enforcement needs a runtime
-  component (compass built a localhost proxy for exactly this). The standard
-  has no vocabulary for "this field requires a mechanism, not a rendering."
-- **Tier naming** — `cheap` is a cost word doing duty on a capability axis,
-  and it reads oddly for a self-hosted tier whose marginal cost is zero.
-  `light`/`standard`/`deep` may age better. Decide before v1.0 freezes names.
-- **Project-opinion detection** — a harness-neutral way for adapters to know
-  a project has an axis-1 stance (needed for `defer`/`insist` to be more
-  than best-effort). Candidate: recognize AGENTS.md and per-harness project
-  config as opinion signals.
-- **Adopt Agent Skills for `[[extensions]]`** (supersedes the former
-  "extension invocation protocol" question). Rather than specify arguments,
-  environment, and lifecycle ourselves, reference `SKILL.md` directories and
-  let adapters install them. Open sub-questions: whether a gate's `run`
-  script also becomes a skill or stays a plain entrypoint; whether a profile
-  bundles skill directories in-repo, references them by path, or both; and
-  whether §3.9 authority should adopt the `allowed-tools` pattern syntax
-  (`Bash(git:*) Read`) instead of inventing a third spelling for the same
-  idea.
+Substantive proposals now live as RFCs in [`docs/rfcs/`](docs/rfcs/), so
+that a claim can be argued before it becomes normative. Several sections
+below are convicted by an open RFC; those RFCs, not this spec, hold the
+current thinking.
+
+**Under active proposal** — see [`docs/rfcs/`](docs/rfcs/):
+
+| RFC | Convicts |
+|---|---|
+| [0001](docs/rfcs/0001-workflow-as-third-input.md) | the two-axis framing; §3.7 gates; §3.10 |
+| [0002](docs/rfcs/0002-two-dimensional-authority.md) | §3.9 — conflates permission with reporting, and has no `deny` |
+| [0003](docs/rfcs/0003-budget-enforcement-model.md) | §3.5, §4.1 — `window` does not say across what, so the aggregate limit does not aggregate |
+| [0004](docs/rfcs/0004-logical-model-roles.md) | §3.4 — one axis is not enough, and supersedes the tier-naming question |
+| [0005](docs/rfcs/0005-project-opinion-detection.md) | §2.2 — `defer` fails open when detection is unreliable |
+| [0006](docs/rfcs/0006-profile-privacy.md) | §3.2's "public by convention" |
+| [0007](docs/rfcs/0007-extensions-and-skills.md) | §3.10 — duplicates Agent Skills; workflow stays unmodeled |
+| [0008](docs/rfcs/0008-effective-configuration.md) | §2, §4 — names the output of resolution |
+
+**Still open, with no proposal yet:**
+
 - **Harness name registry** — §3.3 disclaims a registry, but exact-string
   matching in §3.6 and §4 creates one by convention. A non-normative list of
   known names ("claude-code", "codex", …) would reduce typo-drift.
-- **Secrets/machine-locals** — profiles are public-shaped git repos; whether
-  the standard needs a convention for machine-local overlays. §3.2's `env`
-  selector covers credential-keyed *selection*; machine-local *values* are
-  still unaddressed, and dotfiles managers may simply be the answer.
+- **Machine-local values** — §3.2's `env` selector covers credential-keyed
+  *selection*; machine-local *values* are still unaddressed, and dotfiles
+  managers may simply be the answer. (RFC 0006 settles the related
+  publication question.)
 - **Schema formalization** — a JSON Schema for `chevaline.toml` once the
   field set stabilizes, validated via Taplo and submitted to SchemaStore.org
-  for zero-setup editor validation.
+  for zero-setup editor validation. Premature until adapters have shaken the
+  schema out.
 - **`~/.agents` ecosystem interop** — early efforts exist in the same niche
   (dotStandards `.agents`, dot-agents; see `docs/standards.md`). Before
   v1.0 freezes field names: should adapters also render into `~/.agents/`
   layouts, and is any of their vocabulary worth adopting?
+- **Unmodeled surfaces from the compass review** — MCP server declarations,
+  a subagent roster, and scheduling for unattended runs are all portable,
+  resident-level, and absent. No design yet; see `docs/standards.md`.
