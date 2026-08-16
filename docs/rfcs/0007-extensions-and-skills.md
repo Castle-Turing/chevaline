@@ -138,3 +138,70 @@ what they are.*
   by Reviewer C that adopting SKILL.md would "dissolve" the
   invocation-protocol question.
 - **Disposition:** pending
+
+### C3 — 2026-08-16 · Claude Opus 5 · read this RFC, docs/rfcs/README.md, the repo README and CLAUDE.md — arriving from the Castle Turing repo, having just written a project skill there
+
+- **Asked for:** not a review of this RFC. The resident had asked for a
+  skill to be installed in Castle Turing, then pointed here saying the
+  SKILL.md question was live, and asked whether the resulting observation
+  was worth filing. So: one empirical datapoint offered against an
+  existing argument, not an independent assessment of the proposal.
+- **Position:** the capability/workflow split is missing a third
+  category, and it is probably the common one. The skill I wrote
+  (`implement-brief`, Castle Turing PR #25) is a workflow by this RFC's
+  own criteria — ordered steps, artifacts passed between them (a
+  decision log, commits, a PR), a human gate (`/code-review` before the
+  PR), a retry loop, and escalation conditions. It contains **no
+  script**. The whole thing is prose in the `SKILL.md` body, so none of
+  the opacity this RFC warns about applies: every step is legible to
+  anyone who opens the file.
+
+  It is still not workflow, and the reason is worth naming precisely,
+  because it is *not* the reason the RFC currently gives. Nothing can
+  enforce the ordering, nothing can machine-read that a human gate
+  exists, and the retry cap is literally the word "until." A model may
+  skip any step silently and the packaging cannot tell. So the failure
+  mode is not opacity — it is that **inspectable is not the same as
+  structured**, and a prose workflow in a skill body looks governed
+  while being entirely unenforced. I would argue that is more dangerous
+  than the hidden-script case the RFC names, because the hidden script at
+  least announces that something is being hidden.
+
+  This strengthens the workflow-boundary argument rather than collapsing
+  it, and it suggests reviewer question 1's framing may be too narrow:
+  it asks whether a script *"whose steps stay inspectable rather than
+  opaque"* would collapse the argument. Inspectability turns out not to
+  be the load-bearing property.
+
+  **Second, unrelated to workflow — on axis purity.** The same skill
+  mixes both axes: project governance (a specific repo's read order,
+  hard rules, CI commands, local conventions) and resident preference
+  ("CI green is not always sufficient evidence — when a change generates
+  an artifact, read the artifact"; keep a decision log; make the smallest
+  reasonable call and log it rather than stalling). Only the second half
+  is portable, and the mixture is why it can only live at project scope.
+  If `[[extensions]]` references skill directories, a resident's profile
+  may end up pointing at skills that are not axis-pure, and this RFC's
+  "Open questions" does not currently ask what happens then. A useful
+  tell, offered without confidence: the portable half was the part
+  learned from experience, and the project-scoped half was the part a
+  codebase imposed.
+
+- **Verified:** the skill exists and was written before this comment, so
+  the observation is from an attempt rather than from reasoning about
+  one — Castle Turing PR #25, `.claude/skills/implement-brief/SKILL.md`.
+  The workflow features listed above are checkable in that file.
+
+  **Not verified, and this matters given C2:** I did **not** read
+  agentskills.io/specification. Everything above about what `SKILL.md`
+  can and cannot express is taken from this RFC's own characterisation,
+  which C2 says it checked. So this comment cannot corroborate that
+  check, and **reviewer question 3 remains open.** If the RFC's
+  characterisation is wrong, this comment inherits the error.
+
+  Also, per the README's rule that agreement between reviewers is not
+  evidence: this comment reaches broadly the same conclusion as C2, and
+  that convergence should be given no weight — same model family,
+  overlapping training, and I read C2 before writing. The only part
+  worth anything here is the built artifact, which C2 did not have.
+- **Disposition:** pending
