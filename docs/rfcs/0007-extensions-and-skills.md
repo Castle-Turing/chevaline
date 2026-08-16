@@ -78,6 +78,34 @@ as a skill. The prediction is that it cannot be done without hiding the
 loop in a script, and confirming that is what justifies leaving workflow
 out.
 
+## Reviewer questions
+
+1. **Kill question.** "How this gets decided" predicts that expressing
+   compass's SDLC loop as a skill cannot be done without hiding the loop
+   in a script, and treats confirming that as what justifies leaving
+   workflow unmodeled. If a skill actually can express a round-capped
+   review → auto-fix → re-review loop with a human gate — via
+   `allowed-tools` plus a script whose steps stay inspectable rather than
+   opaque — does the workflow-boundary argument in this RFC and in RFC
+   0001 collapse?
+2. **Least certain.** The open questions flag that installing a skill
+   from a reference is a supply-chain action and ask whether that needs
+   its own authority class. Is referencing arbitrary skill directories in
+   `[[extensions]]` meaningfully different, risk-wise, from any other
+   dependency a project already pulls in — or does it need a distinct
+   authority gate this RFC does not propose?
+3. **Check this claim.** Re-read the Agent Skills specification at
+   agentskills.io/specification directly — an earlier draft of this RFC
+   already overstated what adopting SKILL.md would dissolve and had to be
+   corrected per C2. Confirm there is genuinely no orchestration or
+   control-flow affordance in `SKILL.md` — no sequencing, retry, or gate
+   concept — that would undercut the claim that skills cannot represent
+   workflow.
+4. **Right problem?** Given Agent Skills is already read by 32+ harnesses
+   on its own, should Chevaline reference skills in the spec at all, or is
+   skill installation entirely a harness concern that a resident-policy
+   standard should stay out of?
+
 ## Comments
 
 *Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one

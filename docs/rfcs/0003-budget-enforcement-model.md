@@ -108,6 +108,23 @@ Measure actual combined spend against the declared limit. If it exceeds
 the cap, `aggregate_across` is required rather than optional, and the
 shared ledger stops being a design question and becomes a dependency.
 
+## Reviewer questions
+
+1. **Kill question.** If true cross-harness aggregation requires a shared
+   meter that no config-file adapter can provide without a running service,
+   is a portable budget *standard* viable at all — or should Chevaline
+   declare budget policy and explicitly disclaim enforcement?
+2. **Least certain.** Is `per-harness` aggregation honest enough to offer,
+   or does naming it manufacture exactly the false confidence this RFC
+   exists to remove?
+3. **Check this claim.** This RFC asserts that no harness config file can
+   express "halt before the next model call." Check that against current
+   Claude Code settings and Codex configuration documentation — is there a
+   native mechanism we have missed?
+4. **Right problem?** Providers already offer account-level spend caps and
+   dashboards. Is a profile-level budget filling a real gap, or duplicating
+   something the providers own and do better?
+
 ## Comments
 
 *Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one

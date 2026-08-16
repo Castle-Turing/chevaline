@@ -40,6 +40,7 @@ personal-cross-tool-profile niche.
 | 2026-08-15 | prior-art survey for v0.1 | AGENTS.md, EditorConfig, dotfiles managers, per-harness config |
 | 2026-08-15 | adjacent-standards sweep for v0.2 | `~/.agents` ecosystem, MCP tool annotations, Taplo/SchemaStore |
 | 2026-08-15 | prompted by "are we reinventing Pi?" | **Agent Skills**, Pi |
+| 2026-08-16 | prior art for the RFC process itself, before proposing to standardise it | LLM-as-reviewer literature (peer-review domain) |
 
 ## AGENTS.md — stance: render into + track
 
@@ -206,6 +207,44 @@ inherited convention.
 
 **Verdict: gap (fixed).** v0.1 didn't state its versioning policy; SPEC.md
 now declares SemVer 2.0.0 for the spec version.
+
+## LLM-as-reviewer research — stance: build on (process, not schema)
+
+Not a standard and not about agent configuration, but it is prior art for
+`docs/rfcs/`, whose reviewers are mostly models. The relevant body of work
+is in scholarly peer review rather than engineering RFC process, and it has
+already named failure modes this project was addressing by intuition:
+
+- Documented biases include prestige framing, **assertion-strength
+  sensitivity** (confidently stated claims draw softer criticism), rebuttal
+  sycophancy, and prompt-injection vulnerability —
+  [When Your Reviewer is an LLM](https://arxiv.org/html/2509.09912v1),
+  [LLM-as-a-Reviewer](https://arxiv.org/pdf/2605.25415).
+- **Humans and models weight differently:** humans emphasise novelty and
+  clarity, model reviewers emphasise empirical rigour and technical detail
+  — so "is this the right problem at all" is systematically under-served
+  and must be asked for explicitly.
+- Structured review schemas (dimension-tagged findings, explicit confidence)
+  are established practice —
+  [ReviewEval](https://arxiv.org/pdf/2502.11736),
+  [survey](https://arxiv.org/pdf/2501.10326).
+- [FactReview](https://arxiv.org/pdf/2604.04074) grounds review in
+  execution-based claim verification, which is the same instinct as this
+  project's evidence rule and its `Verified` field.
+
+**Verdict: adheres, with an action taken.** The reviewer-question guidance
+in `docs/rfcs/README.md` now cites these rather than asserting the failure
+modes from first principles. Action outstanding: nobody here has read this
+literature properly, only its abstracts — which is itself a reason not to
+standardise our own process yet (see below).
+
+**On making the RFC process a standard of its own.** Tempting, and premature
+by this project's own rules: zero sweeps have been completed, it has been
+exercised on one project, and a body of adjacent research exists that we
+have not read. Standardising a process before running it once is precisely
+the failure the process was created to prevent. Revisit when the process
+has survived several sweeps across at least two unrelated projects — the
+same two-users test every schema field has to pass.
 
 ## Dotfiles managers (chezmoi, yadm, dotbot) — stance: build on
 

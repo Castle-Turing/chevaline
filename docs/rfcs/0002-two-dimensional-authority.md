@@ -80,6 +80,34 @@ render the decision axis and honestly report the reporting axis as
 unsupported, the split is real. If one adapter finds itself inventing a
 reporting concept the harness does not have, the axis may not be portable.
 
+## Reviewer questions
+
+1. **Kill question.** "How this gets decided" names its own test: if an
+   adapter ends up inventing a reporting concept the harness does not
+   have, the axis is not portable. Today neither Claude Code's
+   `allow`/`deny`/`ask` lists nor Codex's `approval_policy` has any
+   reporting concept. If that gap holds across every harness examined,
+   not just these two, should `report` be dropped from the spec rather
+   than kept as an axis no adapter can render honestly?
+2. **Least certain.** The open questions ask whether `report` is
+   genuinely resident-only, or whether a project might reasonably require
+   certain actions to be conspicuous in a shared log. If a project can
+   insist on `report`, does the clean composition rule this RFC
+   proposes — decision composes across axes, report is the resident's own
+   call — survive, or does report need the same cross-axis composition
+   machinery as decision already has?
+3. **Check this claim.** "How this gets decided" asserts Claude Code's
+   `allow`/`deny`/`ask` lists "map to the decision axis cleanly" while
+   Codex's `approval_policy` is "a session-wide mode rather than a
+   per-action grant." Check both against current Claude Code settings
+   documentation and Codex configuration documentation — has either
+   gained a per-action grant or a reporting mechanism that changes this
+   picture?
+4. **Right problem?** Is interruption — when and how loudly an agent
+   surfaces something — a configuration concern that belongs in a
+   portable profile at all, or is it a user-interface concern that
+   necessarily belongs to the harness doing the rendering?
+
 ## Comments
 
 *Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one

@@ -71,6 +71,30 @@ editing, roles are portable. If each workflow needs its own bespoke
 bindings, roles are workflow-local configuration wearing a standard's
 clothing.
 
+## Reviewer questions
+
+1. **Kill question.** "How this gets decided" proposes running two
+   workflows with materially different role sets against one profile: if
+   each needs its own bespoke bindings, roles are workflow-local
+   configuration wearing a standard's clothing, not a portable field. Is
+   there real reason to expect that test to pass, or does an "open role
+   vocabulary" make bespoke bindings the default outcome by construction?
+2. **Least certain.** The open questions ask what happens when a workflow
+   declares a role the profile has not bound and whose fallback tier is
+   also unbound. That looks like a hard failure waiting to happen. Is
+   there a coherent answer short of "the workflow refuses to run," and if
+   not, does mandatory tier fallback actually solve the problem it was
+   introduced to solve?
+3. **Check this claim.** RFC 0004 already caught and corrected one
+   unverified claim about tier naming (C1, commit b075dff). Check whether
+   Claude Code's subagent definitions, or Agent Skills' frontmatter, or
+   any current harness already provides a role-or-persona binding
+   mechanism this proposal would duplicate rather than fill a genuine gap.
+4. **Right problem?** Do residents actually hold stable opinions
+   per-role — "I always want an independent correctness-reviewer" — or do
+   they mostly hold opinions per-cost, with roles just a workflow-side
+   label attached after the fact?
+
 ## Comments
 
 *Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one

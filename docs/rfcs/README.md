@@ -69,6 +69,56 @@ compensate:
   RFC. Record those too, so a reviewer with a pattern of finding nothing is
   visible.
 
+### Reviewer questions
+
+Every RFC carries a `## Reviewer questions` section. If a comment is
+uninterpretable without knowing what was asked, then leaving the ask to
+whoever happens to paste the file into a model is leaving the most
+important variable to chance. The RFC supplies the framing.
+
+The obvious hazard is that the author writes the questions, which is the
+defendant writing the jury instructions. Guards, most of them borrowed from
+the research on LLM reviewers rather than invented here (see
+[`../standards.md`](../standards.md)):
+
+- **Include a kill question.** At least one question whose answer could
+  mean *abandon this*, not *revise this*. An RFC with no such question is
+  soliciting improvements to a conclusion already reached.
+- **Do not let the kill question merely restate `How this gets decided`.**
+  The author wrote that test too, so a question anchored to it asks the
+  reviewer to confirm the author's own account of what would be fatal —
+  capture one level up. Observed on the first pass: six of eight kill
+  questions opened by quoting the RFC's own falsification test. At least
+  one question per RFC should attack a *premise* the RFC does not treat as
+  in doubt.
+- **Ask about what you are least sure of**, not what you are proudest of.
+  The `Open questions` section is the natural source.
+- **State the proposal in its weak form when asking.** Model reviewers are
+  sensitive to assertion strength — confident phrasing measurably softens
+  criticism — so a question that leads with how well-reasoned the proposal
+  is will get agreement regardless of merit.
+- **Name specific factual claims and ask for them to be checked against a
+  source.** Unprompted, reviewers answer from memory, which is where this
+  project's known errors have come from.
+- **Ask whether this is the right problem at all.** Human and model
+  reviewers weight differently: humans emphasise novelty and framing, model
+  reviewers emphasise technical rigour and internal consistency. The
+  "should this exist" dimension is the one that gets systematically
+  under-served, so ask for it explicitly.
+- **Do not ask what the RFC already answers.** That tests reading, not
+  judgement.
+
+**Distribute rather than pool.** Given that agreement between reviewers is
+not evidence, asking five reviewers the same four questions buys less than
+asking them different ones. Coverage is worth more than a robustness check
+on a single answer, because the correlated-error failure makes the
+robustness check unreliable anyway.
+
+Reviewer questions target the *design and its claims*. They do not settle
+the RFC — `How this gets decided` does that, with evidence. Review's job is
+to save you from gathering evidence on a broken design, not to substitute
+for the evidence.
+
 ### Record format
 
 ```markdown

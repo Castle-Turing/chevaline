@@ -71,6 +71,51 @@ a real proposal loop — a system that observes, proposes a diff, and is
 correctly gated — before the class earns its place. Until then it is a
 plausible field with no evidence behind it.
 
+## Note: this RFC probably wants splitting
+
+Writing the reviewer questions exposed a structural problem. The kill
+question and the right-problem question collapse into the same challenge,
+because this RFC bundles two proposals of very different maturity:
+
+- **Naming effective configuration** is close to settled — the resolver
+  already produces the artifact, so the term describes something that
+  exists.
+- **`profile.modify`** is admittedly speculative, governing a category of
+  system that nothing currently implements.
+
+They need different evidence and will disposition independently, which by
+the project's own rule — several dispositions means it was several items —
+means they should be separate RFCs. Left bundled for now because splitting
+churns numbering, links, and an existing comment record; worth doing before
+either half moves out of Draft.
+
+## Reviewer questions
+
+1. **Kill question.** "How this gets decided" concedes that
+   `profile.modify` needs a real proposal loop — a system that observes,
+   proposes a diff, and is correctly gated — before the class earns its
+   place, and that until then it is "a plausible field with no evidence
+   behind it." If no such system ever materializes, should
+   `profile.modify` be dropped from the spec rather than carried as an
+   authority class governing a capability nothing exercises?
+2. **Least certain.** The open questions ask whether effective
+   configuration needs to be serializable and diffable as a stable
+   artifact, or is always transient. If it is always transient, does
+   naming it as a first-class spec term change anything an adapter
+   actually does, or is this a definition with no operational
+   consequence?
+3. **Check this claim.** Check whether comparable configuration-resolution
+   systems — `kubectl` (merged/applied config), Terraform (plan/state), or
+   chezmoi (target state) — already have an established name for exactly
+   this resolved-output concept, and whether "effective configuration" is
+   consistent with that prior art or reinvents a term other systems
+   already settled.
+4. **Right problem?** RFC 0008 itself admits nothing today proposes
+   automatic diffs against a resident's profile. Is `profile.modify`
+   closing a real gap, or is it governance designed in advance for a
+   category of system that may never exist, at the cost of complexity
+   every adapter now has to carry?
+
 ## Comments
 
 *Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one

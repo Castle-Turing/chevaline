@@ -63,6 +63,20 @@ This one does not need an adapter. It needs a review of a real profile —
 the author's, once it exists — asking what an adversary would learn from
 it. If the answer is "not much," the default can be reconsidered.
 
+## Reviewer questions
+
+1. **Kill question.** If real profiles are private by default, does the
+   dotfiles analogy motivating the whole distribution model collapse — and
+   with it the claim that adoption is just pointing your tooling at a repo?
+2. **Least certain.** Is there a coherent third posture for a team sharing
+   one employer's profile, or does that case belong to axis 1 entirely?
+3. **Check this claim.** Check how this project's cited precedents —
+   chezmoi, yadm, dotbot — actually handle secrets and machine-local
+   values, and say whether pointing at them suffices or whether a Chevaline
+   convention is genuinely needed.
+4. **Right problem?** Should a *standard* have an opinion about publication
+   posture at all, rather than leaving it to each resident?
+
 ## Comments
 
 *Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one

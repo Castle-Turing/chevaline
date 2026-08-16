@@ -88,6 +88,34 @@ both run without the profile changing, the seam is in the right place. If
 either requires profile edits to accommodate its shape, the seam is wrong
 and workflow is not as separable as claimed.
 
+## Reviewer questions
+
+1. **Kill question.** "How this gets decided" sets its own falsification
+   test: if either of the two workflows needs profile edits to run, the
+   seam is wrong. Suppose that happens — workflow and resident preference
+   turn out entangled rather than independent. Given that the proposal
+   already narrows Chevaline's identity to "portable resident policy and
+   preference" on the strength of this seam existing, what is left to
+   build once the axis it just carved out turns out not to exist?
+2. **Least certain.** The open questions ask what stops a workflow that
+   declares roles and gates from quietly becoming axis-1 governance for
+   anyone who adopts it. Is there an actual mechanism to prevent that, or
+   does moving workflow out of the profile just relocate the
+   governance-creep risk one layer down rather than remove it?
+3. **Check this claim.** The workflow package format is left deliberately
+   unspecified, on the premise that "there is not yet enough evidence
+   about what a portable workflow schema should contain." Check whether an
+   existing format — GitHub Actions workflows, Temporal, LangGraph, or
+   n8n — already expresses compass's review → auto-fix → re-review loop
+   (round-capped at three, then a human gate) well enough that
+   `[workflow] use = "…"` should point at one of those rather than an
+   undefined new package format.
+4. **Right problem?** Even granting that workflow and preference are
+   separable in principle, is *selecting* a workflow something a static
+   profile should pin at all, or is it a per-task decision made fresh each
+   time — in which case `[workflow] use = "…"` solves a problem no one
+   actually has?
+
 ## Comments
 
 *Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one

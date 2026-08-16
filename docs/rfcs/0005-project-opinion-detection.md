@@ -70,6 +70,32 @@ that gestures at a policy without stating it. Count how often state 4 is
 reached. If it is the common case, `defer` is not viable as specified and
 needs a different default.
 
+## Reviewer questions
+
+1. **Kill question.** "How this gets decided" proposes running the
+   resolver against real repositories and counting how often "policy
+   exists but cannot be interpreted" is reached, stating outright that if
+   it is the common case, `defer` is not viable as specified. If that
+   count comes back high, is there a workable notion of `defer` left at
+   all, or does the whole layer/defer/insist vocabulary need rethinking
+   rather than just being made more conservative?
+2. **Least certain.** The open questions ask whether a heuristic reading
+   of prose is ever acceptable, or whether anything short of
+   machine-readable governance lands in state 4 by definition. If it is
+   always state 4, how much of the four-state model actually survives
+   contact with the `AGENTS.md`/`CLAUDE.md` reality this RFC itself
+   describes as unreliable to merge?
+3. **Check this claim.** The problem section states there is "no
+   machine-readable project governance format to read instead" of prose.
+   Check that against current formats — `.editorconfig`, CI configuration
+   schemas, CODEOWNERS, or any structured extension to `AGENTS.md` — is
+   there a machine-readable governance signal adapters could read today
+   that this claim overlooks?
+4. **Right problem?** Should Chevaline itself propose a machine-readable
+   axis-1 governance format so state 4 becomes rarer, or is inventing a
+   project-governance standard someone else's problem entirely, outside
+   the scope of a resident-preference standard?
+
 ## Comments
 
 *Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one
