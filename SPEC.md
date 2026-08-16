@@ -76,9 +76,11 @@ compatibility for the second, a loud failure for the first. **The declared
 `spec` version distinguishes them.** If the profile declares a version
 *newer* than the adapter implements, an unrecognized selector is a warning
 and the environment simply does not match. If the profile's version is one
-the adapter fully implements, the selector cannot be from the future, so it
-is a validation **error** — because silently rendering an environment
-permanently inert is a worse outcome than refusing to run.
+the adapter fully implements **or older**, the selector cannot be from the
+future, so it is a validation **error** — because silently rendering an
+environment permanently inert is a worse outcome than refusing to run.
+Leniency is justified only by a genuine forward-compatibility possibility,
+which an older declared version does not provide.
 
 This rule assumes newer versions only *add* selectors. SemVer permits
 breaking changes throughout `0.x`, so a selector renamed in a later `0.x`
@@ -116,11 +118,14 @@ strongest expressible stance.
 This is the correction of an earlier defect in which `layer` was declared
 the universal default and then applied to a setting where it is meaningless:
 
-| Preference shape | Valid modes | Default |
-|---|---|---|
-| Additive (a set of checks, e.g. gates) | `layer`, `defer`, `insist` | `layer` |
-| Single-valued (an enum or scalar, e.g. session isolation) | `defer`, `insist` | `defer` |
-| Permission or limit (authority) | `restrict` | `restrict` |
+| Preference shape | Sections | Valid modes | Default |
+|---|---|---|---|
+| Additive (a set of items) | `[[gates]]`, `[[extensions]]` | `layer`, `defer`, `insist` | `layer` |
+| Single-valued (one choice) | `[sessions]`, `[harnesses]`, `[models]` | `defer`, `insist` | `defer` |
+| Permission or limit | `[authority]` | `restrict` | `restrict`, not settable |
+
+Every section that takes `compose` is named above, so no adapter has to
+classify one by elimination.
 
 `layer` is incoherent for a single-valued setting: there is no sense in
 which a resident's `worktree` preference "also runs" alongside a project's
@@ -136,6 +141,11 @@ known.
 - **Instructions (§3.6)** — they describe the resident, not the work.
 - **Budget (§3.5)** — a project has no standing to spend the resident's
   money or quota.
+
+Writing a `compose` key in either is a validation **error**, not a
+harmlessly ignored field — the same rule as `[authority]` below. A silently
+accepted mode that never takes effect is a preference the resident believes
+they expressed and did not.
 
 Authority (§3.9) is *not* in this list. It composes with `restrict`
 implicitly and always — a project or platform restriction that is stricter
@@ -461,7 +471,9 @@ their own agents.
 id = "orchestrator"
 run = "scripts/orchestrate.py"
 description = "Fan out a task across several agent sessions"
-compose = "defer"                   # a project may forbid arbitrary scripts
+compose = "defer"                   # a deliberate choice, not the default:
+                                    # extensions are additive, so §2.2 gives
+                                    # them `layer` unless stated otherwise
 ```
 
 v0.3 deliberately specifies only *identification* (an id, an entrypoint, a

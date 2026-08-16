@@ -9,10 +9,19 @@ Given the path to a Chevaline profile, this adapter will render it into
 Claude Code's native global config: `~/.claude/CLAUDE.md` and
 `~/.claude/settings.json`. Per the adapter contract in SPEC.md §4, it
 will validate the manifest against its declared spec version, render
-idempotently into marker-delimited regions (so hand-written config above
-and below the markers is never clobbered), honor each field's composition
-mode, and print a report of anything it could not express in Claude
-Code's config surfaces rather than dropping it silently.
+idempotently, honor each field's composition mode, and print a report of
+anything it could not express in Claude Code's config surfaces rather
+than dropping it silently.
+
+Idempotent, non-clobbering re-rendering works differently for the two
+targets, because they don't share a format. `CLAUDE.md` is prose with
+comments, so the adapter can wrap its output in marker comments and only
+touch what's between them. `settings.json` is JSON, which has no comment
+syntax to hold a marker — SPEC.md §4 item 3 requires a comment-less format
+to instead record the keys it owns in a **sidecar manifest** alongside the
+rendered file (e.g. `~/.claude/settings.chevaline.json`, a flat list of
+the JSON paths this adapter last wrote), and touch only those keys on
+re-render, leaving everything else the resident wrote by hand alone.
 
 ## Mapping
 
@@ -21,7 +30,7 @@ Code's config surfaces rather than dropping it silently.
 | `[[instructions]]`         | `~/.claude/CLAUDE.md` (marker-delimited region)   |
 | `[authority]`              | `~/.claude/settings.json` `permissions`           |
 | `[harnesses]`              | Used to decide whether this adapter runs at all   |
-| `[environment.*]`          | Resolved before rendering; never rendered itself  |
+| `[[environment]]`          | Resolved before rendering; never rendered itself  |
 | `[models]`                 | Partial — `settings.json` `model` takes one tier  |
 | `[budget]`                 | No config surface — needs a hook (see below)      |
 | `[[gates]]`                | TBD — likely a hook, if `run` is set               |
@@ -31,10 +40,12 @@ Code's config surfaces rather than dropping it silently.
 Rows marked TBD have no settled Claude Code config surface yet; the
 rendering report will call these out as skipped until one is designed.
 
-`[environment.*]` is not a render target: per SPEC.md §2, environments
+`[[environment]]` is not a render target: per SPEC.md §2, environments
 resolve *first*, and this adapter renders the resulting effective values.
 It must be able to report which environment matched and which selector
-decided it.
+decided it — and, per SPEC.md §3.2, whether that environment matched via
+its own `when` block or via explicit activation (selecting it by `name`,
+bypassing `when` entirely).
 
 `[models]` maps only partially. Claude Code's `settings.json` carries a
 single default `model`, so one tier renders directly and the others have

@@ -29,7 +29,7 @@ separate repo that implements this spec.
 ## A minimal profile
 
 ```toml
-spec = "0.2"
+spec = "0.3"
 
 [resident]
 name = "Ada"
@@ -55,7 +55,7 @@ section.
 ## Repo layout
 
 ```
-SPEC.md              # the v0.2 manifest specification
+SPEC.md              # the v0.3 manifest specification
 docs/vision.md        # the case for this standard, in full
 examples/ada/         # a complete fictional reference profile
 adapters/             # per-harness adapters (renderers)
@@ -77,5 +77,5 @@ across every territory.
 
 ## Status
 
-v0.2 draft. The schema, repo layout, and adapter contract are drafted in
+v0.3 draft. The schema, repo layout, and adapter contract are drafted in
 SPEC.md; no adapter is implemented yet.

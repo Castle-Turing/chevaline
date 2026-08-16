@@ -1,7 +1,7 @@
 # Ada's Chevaline profile — a fictional reference example.
 # Exercises every section of SPEC.md §3 (3.1 through 3.10).
 
-spec = "0.2"
+spec = "0.3"
 
 [resident]
 name = "Ada"
@@ -10,19 +10,20 @@ name = "Ada"
 # budget against her employer's self-hosted open-weights models. The base
 # below stays the conservative floor; this environment raises it only
 # while Ada is actually inside the employer's repos.
-[environment.work]
+[[environment]]
+name = "work"
 when.git_org = "acme"
 when.path = "~/work/**"
 
-[environment.work.models]
-cheap = "qwen2.5-coder"
-deep  = "llama-3.3-405b"
+  [environment.models]
+  cheap = "qwen2.5-coder"
+  deep  = "llama-3.3-405b"
 
-[environment.work.budget]
-on_exceed = "halt"
-limits = [
-  { scope = "*", window = "session", amount = 5_000_000, unit = "tokens" },
-]
+  [environment.budget]
+  on_exceed = "halt"
+  limits = [
+    { scope = "*", window = "session", amount = 5_000_000, unit = "tokens" },
+  ]
 
 # Try Claude Code first; fall back to Codex if it isn't available.
 [harnesses]
@@ -71,7 +72,9 @@ compose = "defer"
 
 # How much latitude Ada's own agents get, per action class. Authority only
 # tightens; it never loosens anything a project or harness already
-# restricts.
+# restricts. Authority composes with `restrict` implicitly and always —
+# writing an explicit `compose` key here would be a validation error
+# (SPEC §3.9), so this section deliberately has none.
 [authority]
 default = "reported"
 
