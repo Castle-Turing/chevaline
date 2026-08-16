@@ -34,6 +34,33 @@ model call nor see authoritative usage before the next one. The mandatory
 is true of the provider and not necessarily true of the adapter's vantage
 point.
 
+## Found in practice (2026-08-16)
+
+The first real profile resolved through `tools/chevaline.py` exhibited a
+second, related fail-open — one the spec guards against in half of its
+occurrences and misses in the other half.
+
+The base declared three limits: an aggregate per session, an aggregate per
+day, and a tighter per-day cap on the `deep` tier. An environment raised
+the two aggregates. Because arrays replace wholesale (§2.1), the resolved
+budget contained *only* the environment's two limits: **the per-tier cap
+disappeared.** The environment was written to raise a ceiling and silently
+removed a constraint.
+
+§2.1 anticipates exactly this for the aggregate — "an environment that
+overrides `limits` must restate its own aggregate" — and §3.5 makes that
+case a validation error. Neither says anything about sub-limits, and no
+rule catches their loss, so the spec guards the fail-open case its authors
+thought of and misses the structurally identical one they did not.
+
+This strengthens the case that budget needs richer structure than a flat
+replaceable array, and it is independent of the aggregation hole above.
+
+Candidate mitigations: warn when the resolved limit set drops a `scope`
+present in the base; give limits stable identity so they can be merged
+rather than replaced; or split aggregate limits from scoped limits so the
+two compose differently.
+
 ## Proposal
 
 Illustrative:
