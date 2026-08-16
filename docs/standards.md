@@ -11,7 +11,7 @@ it, and an **audit verdict** for the current spec. Stances:
 
 Verdicts: **adheres** / **gap** (with the fix) / **justified divergence**
 (with the reason). Re-audit whenever the spec version bumps or a tracked
-standard moves. Last audited: 2026-08-15, against spec v0.1 draft.
+standard moves. Last audited: 2026-08-15, against spec v0.2 draft.
 
 ## AGENTS.md — stance: render into + track
 
@@ -22,7 +22,7 @@ so it is not a substitute for Chevaline. Two open proposals matter to us:
 
 - [issue #91](https://github.com/agentsmd/agents.md/issues/91): a global
   `~/.config/agents/AGENTS.md`. If this lands, it becomes the *preferred
-  render target* for §3.3 instructions — one write serves every
+  render target* for §3.6 instructions — one write serves every
   AGENTS.md-reading harness, and per-harness instruction rendering becomes
   the fallback, not the default.
 - [issue #135](https://github.com/agentsmd/agents.md/issues/135): spec
@@ -33,7 +33,7 @@ Some harnesses already read a user-level AGENTS.md natively (Codex:
 `~/.codex/AGENTS.md`) — adapters should prefer that channel where it
 exists.
 
-**Verdict: adheres, with an action.** §3.3 instructions are portable prose
+**Verdict: adheres, with an action.** §3.6 instructions are portable prose
 rendered into native channels, which is the right shape. Action: the
 adapter contract should name AGENTS.md-compatible channels as the
 preferred instruction target where a harness offers one.
@@ -78,13 +78,13 @@ The adapter output targets, as of mid-2026:
 
 No cross-tool standard exists. Nearest things: Codex's `approval_policy`
 (`untrusted | on-request | never`) — the closest shipping analogue to
-§3.6's `silent`/`reported`/`approval` and an obvious adapter mapping — and
+§3.9's `silent`/`reported`/`approval` and an obvious adapter mapping — and
 MCP tool annotations (`readOnlyHint`, `destructiveHint`, …), which are
 advisory metadata about *tools*, not a resident-side authority grant, so
 not adoptable as our vocabulary. NIST/CAISI has a rumored agent-interop
 profile (Q4 2026, unconfirmed).
 
-**Verdict: justified divergence.** §3.6 fills a real vacuum. Adapters
+**Verdict: justified divergence.** §3.9 fills a real vacuum. Adapters
 should map to native enforcement (Codex `approval_policy`, Claude Code
 permission rules) rather than reimplementing it; revisit if a real
 standard emerges.

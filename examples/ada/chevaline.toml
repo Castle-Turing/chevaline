@@ -1,14 +1,48 @@
 # Ada's Chevaline profile — a fictional reference example.
-# Exercises every section of SPEC.md §3.
+# Exercises every section of SPEC.md §3 (3.1 through 3.10).
 
-spec = "0.1"
+spec = "0.2"
 
 [resident]
 name = "Ada"
 
+# An environment overlay for Ada's employer: a bigger, token-denominated
+# budget against her employer's self-hosted open-weights models. The base
+# below stays the conservative floor; this environment raises it only
+# while Ada is actually inside the employer's repos.
+[environment.work]
+when.git_org = "acme"
+when.path = "~/work/**"
+
+[environment.work.models]
+cheap = "qwen2.5-coder"
+deep  = "llama-3.3-405b"
+
+[environment.work.budget]
+on_exceed = "halt"
+limits = [
+  { scope = "*", window = "session", amount = 5_000_000, unit = "tokens" },
+]
+
 # Try Claude Code first; fall back to Codex if it isn't available.
 [harnesses]
 prefer = ["claude-code", "codex"]
+
+# Base model tiers: Ada's personal Anthropic account.
+[models]
+cheap    = "claude-haiku-4-5"
+standard = "claude-sonnet-4-5"
+deep     = "claude-opus-4-5"
+
+# Base budget: Ada's own wallet, in dollars, on her personal account. This
+# is the conservative floor — small and currency-denominated — that the
+# work environment above raises for employer-funded, token-metered use.
+[budget]
+on_exceed = "halt"
+limits = [
+  { scope = "*",             window = "day", amount = 10, unit = "USD" },
+  { scope = "claude-opus-*", window = "day", amount =  5, unit = "USD" },
+]
 
 # Portable prose, concatenated into whatever instruction channel the
 # harness's adapter renders into.

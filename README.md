@@ -29,13 +29,14 @@ separate repo that implements this spec.
 ## A minimal profile
 
 ```toml
-spec = "0.1"
+spec = "0.2"
 
 [resident]
 name = "Ada"
 
-[harnesses]
-prefer = ["claude-code", "codex"]
+[budget]
+on_exceed = "halt"
+limits = [ { scope = "*", window = "day", amount = 10, unit = "USD" } ]
 
 [[instructions]]
 path = "instructions/communication.md"
@@ -54,7 +55,7 @@ section.
 ## Repo layout
 
 ```
-SPEC.md              # the v0.1 manifest specification
+SPEC.md              # the v0.2 manifest specification
 docs/vision.md        # the case for this standard, in full
 examples/ada/         # a complete fictional reference profile
 adapters/             # per-harness adapters (renderers)
@@ -76,5 +77,5 @@ across every territory.
 
 ## Status
 
-v0.1 draft. The schema, repo layout, and adapter contract are drafted in
+v0.2 draft. The schema, repo layout, and adapter contract are drafted in
 SPEC.md; no adapter is implemented yet.
