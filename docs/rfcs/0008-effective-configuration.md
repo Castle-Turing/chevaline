@@ -70,3 +70,23 @@ settled by the artifact existing and being legible. `profile.modify` needs
 a real proposal loop — a system that observes, proposes a diff, and is
 correctly gated — before the class earns its place. Until then it is a
 plausible field with no evidence behind it.
+
+## Comments
+
+*Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one
+or record a disposition. See [README](README.md) for why the fields are
+what they are.*
+
+### C1 — 2026-08-16 · unattributed model · saw the repo via a paste, and wrote partly from a Castle Turing vantage point
+
+- **Asked for:** an assessment, with the requester noting in advance that
+  they expected parts of it to be controversial.
+- **Position:** distinguish declared, inferred, and effective
+  configuration; whether a system may auto-apply a proposed profile
+  change is itself an authority decision.
+- **Verified:** analytic.
+- **Disposition:** adopted — the declared/effective distinction and the
+  `profile.modify` class were carried into this RFC. Not adopted: inferred
+  preferences, judged out of scope for the standard, since a system may
+  form them but the standard's only job is to be a good target for the
+  diff they produce.

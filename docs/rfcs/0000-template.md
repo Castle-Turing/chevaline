@@ -33,3 +33,16 @@ open questions is usually one that has not been thought about hard enough.
 
 The evidence that would settle it. Name the artifact and the observation.
 See the standing falsification test in [README](README.md).
+
+## Comments
+
+*Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one
+or record a disposition. See [README](README.md) for why the fields are
+what they are.*
+
+### C1 — YYYY-MM-DD · reviewer (model + version, or `unattributed`) · how it saw the repo
+
+- **Asked for:** what the reviewer was actually prompted to do
+- **Position:** the substance, in a line or two
+- **Verified:** which claims were checked and how; which remain unchecked
+- **Disposition:** pending | adopted | rejected | deferred | spawned RFC NNNN — with the reason

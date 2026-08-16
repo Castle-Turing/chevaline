@@ -70,3 +70,35 @@ profile. If the profile's bindings and fallbacks cover both without
 editing, roles are portable. If each workflow needs its own bespoke
 bindings, roles are workflow-local configuration wearing a standard's
 clothing.
+
+## Comments
+
+*Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one
+or record a disposition. See [README](README.md) for why the fields are
+what they are.*
+
+### C1 — 2026-08-16 · DeepSeek Flash · read the full repo — SPEC.md, docs/vision.md, docs/standards.md, adapters/claude-code stub, examples/ada
+
+- **Asked for:** an honest assessment of a one-day-old project, explicitly
+  invited to push back.
+- **Position:** rename the tiers now rather than "before v1.0" — `cheap`
+  is a cost word on a capability axis and collides with budget
+  vocabulary; zero adapters exist so the cost of renaming is zero today.
+- **Verified:** prompted a check of the spec's prior-art claim for the
+  tier names, which turned out to be WRONG — the spec said Codex ships
+  cheap/standard/deep profiles, but Codex supplies only the profile
+  mechanism and compass authored those names. Corrected in commit
+  b075dff.
+- **Disposition:** pending
+
+### C2 — 2026-08-16 · unattributed model · saw the repo via a paste, and wrote partly from a Castle Turing vantage point
+
+- **Asked for:** an assessment, with the requester noting in advance that
+  they expected parts of it to be controversial.
+- **Position:** tiers are one-dimensional; workflows should name logical
+  roles (specifier, implementer, design-reviewer, correctness-reviewer)
+  and Chevaline should bind them, with tiers demoted to fallback.
+- **Verified:** analytic; the independence-between-reviewer-and-implementer
+  point is a pair constraint that the current schema provably cannot
+  express.
+- **Disposition:** pending

@@ -87,3 +87,22 @@ which already differ substantially — executed against the same profile. If
 both run without the profile changing, the seam is in the right place. If
 either requires profile edits to accommodate its shape, the seam is wrong
 and workflow is not as separable as claimed.
+
+## Comments
+
+*Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one
+or record a disposition. See [README](README.md) for why the fields are
+what they are.*
+
+### C1 — 2026-08-16 · unattributed model · saw the repo via a paste, and wrote partly from a Castle Turing vantage point
+
+- **Asked for:** an assessment, with the requester noting in advance that
+  they expected parts of it to be controversial.
+- **Position:** development needs a third independent input, the workflow
+  recipe ("how this kind of work proceeds"), plus runtime capabilities as
+  a fourth; Chevaline should narrow to portable resident policy and select
+  workflows rather than define them.
+- **Verified:** the argument is structural, not a factual claim; the
+  supporting observation that `[[gates]]`/`[[extensions]]` are the weakest
+  sections is independently confirmed by Reviewer C's compass mapping.
+- **Disposition:** pending

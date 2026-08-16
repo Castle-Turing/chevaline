@@ -79,3 +79,33 @@ session-wide mode rather than a per-action grant. If both adapters can
 render the decision axis and honestly report the reporting axis as
 unsupported, the split is real. If one adapter finds itself inventing a
 reporting concept the harness does not have, the axis may not be portable.
+
+## Comments
+
+*Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one
+or record a disposition. See [README](README.md) for why the fields are
+what they are.*
+
+### C1 — 2026-08-15 · Claude Fable 5 · in-session, read the compass repository directly and mapped it against the then-current spec
+
+- **Asked for:** whether the standard was expressive enough to capture a
+  real third-party workflow.
+- **Position:** the taxonomy has no `deny` level, so a resident cannot
+  express "never"; compass denies reads of `.env`, `*.pem`, and
+  `~/.ssh/**` outright and Chevaline cannot represent it.
+- **Verified:** read directly from compass's `claude/settings.json`
+  permissions block.
+- **Disposition:** pending
+
+### C2 — 2026-08-16 · unattributed model · saw the repo via a paste, and wrote partly from a Castle Turing vantage point
+
+- **Asked for:** an assessment, with the requester noting in advance that
+  they expected parts of it to be controversial.
+- **Position:** `silent`/`reported`/`approval` conflates permission with
+  interruption and should split into `decision` (allow/ask/deny) and
+  `report` (silent/receipt/interrupt), which also yields the missing
+  `deny`.
+- **Verified:** argument is analytic and checks out against the spec's
+  own text; the claim that the §3.9 strictness ordering is thereby
+  incomplete was confirmed against SPEC.
+- **Disposition:** pending

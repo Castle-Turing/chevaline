@@ -77,3 +77,36 @@ reference model holds. Separately: attempt to express compass's SDLC loop
 as a skill. The prediction is that it cannot be done without hiding the
 loop in a script, and confirming that is what justifies leaving workflow
 out.
+
+## Comments
+
+*Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one
+or record a disposition. See [README](README.md) for why the fields are
+what they are.*
+
+### C1 — 2026-08-16 · DeepSeek Flash · read the full repo — SPEC.md, docs/vision.md, docs/standards.md, adapters/claude-code stub, examples/ada
+
+- **Asked for:** an honest assessment of a one-day-old project, explicitly
+  invited to push back.
+- **Position:** `[[extensions]]` is a known-bad section whose fix is
+  already identified; shipping v0.2 with a section the ledger itself
+  convicts makes the spec stale on day one.
+- **Verified:** confirmed that nothing depends on the draft — no git tags
+  and no releases exist, so the change cost is zero.
+- **Disposition:** pending
+
+### C2 — 2026-08-16 · unattributed model · saw the repo via a paste, and wrote partly from a Castle Turing vantage point
+
+- **Asked for:** an assessment, with the requester noting in advance that
+  they expected parts of it to be controversial.
+- **Position:** adopting SKILL.md is right for capabilities but a skill
+  is not a workflow language — it cannot represent roles, ordered or
+  parallel steps, artifacts between steps, retry limits, human gates, or
+  escalation conditions.
+- **Verified:** checked directly against the Agent Skills specification
+  at agentskills.io/specification, which confirms both that it
+  standardizes the package format and that it specifies no discovery
+  locations or user-level scope. This corrected an earlier overstatement
+  by Reviewer C that adopting SKILL.md would "dissolve" the
+  invocation-protocol question.
+- **Disposition:** pending

@@ -107,3 +107,24 @@ Two adapters running concurrently against one profile with a daily cap.
 Measure actual combined spend against the declared limit. If it exceeds
 the cap, `aggregate_across` is required rather than optional, and the
 shared ledger stops being a design question and becomes a dependency.
+
+## Comments
+
+*Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one
+or record a disposition. See [README](README.md) for why the fields are
+what they are.*
+
+### C1 — 2026-08-16 · unattributed model · saw the repo via a paste, and wrote partly from a Castle Turing vantage point
+
+- **Asked for:** an assessment, with the requester noting in advance that
+  they expected parts of it to be controversial.
+- **Position:** budget cannot generally be rendered; separate declared
+  policy, enforcement capability, current status, and shared usage
+  ledger, and let a profile require enforcement. The cross-harness
+  aggregation point (two adapters each enforcing $10/day yields $20/day)
+  is the sharpest part.
+- **Verified:** the aggregation hole was confirmed by inspection of SPEC
+  §3.5, which never says across what a window aggregates. A structurally
+  similar fail-open was independently found by `tools/chevaline.py` on
+  2026-08-16 and is recorded in the body of this RFC.
+- **Disposition:** pending

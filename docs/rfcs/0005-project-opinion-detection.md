@@ -69,3 +69,21 @@ governance — one with a strict `AGENTS.md`, one with none, one with prose
 that gestures at a policy without stating it. Count how often state 4 is
 reached. If it is the common case, `defer` is not viable as specified and
 needs a different default.
+
+## Comments
+
+*Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one
+or record a disposition. See [README](README.md) for why the fields are
+what they are.*
+
+### C1 — 2026-08-16 · unattributed model · saw the repo via a paste, and wrote partly from a Castle Turing vantage point
+
+- **Asked for:** an assessment, with the requester noting in advance that
+  they expected parts of it to be controversial.
+- **Position:** `layer`/`defer`/`insist` are fine once a conflict is
+  known, but detection is the hard part; adapters must distinguish four
+  states and "unknown" must not quietly become "no conflict."
+- **Verified:** the internal inconsistency it implies was confirmed —
+  SPEC §2.1 requires unknown selectors to fail closed while §2.2's
+  `defer` fails open on the same class of uncertainty.
+- **Disposition:** pending

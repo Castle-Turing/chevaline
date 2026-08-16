@@ -62,3 +62,23 @@ identically.
 This one does not need an adapter. It needs a review of a real profile —
 the author's, once it exists — asking what an adversary would learn from
 it. If the answer is "not much," the default can be reconsidered.
+
+## Comments
+
+*Append-only. Numbered C1, C2, … Never edit a prior comment; add a new one
+or record a disposition. See [README](README.md) for why the fields are
+what they are.*
+
+### C1 — 2026-08-16 · unattributed model · saw the repo via a paste, and wrote partly from a Castle Turing vantage point
+
+- **Asked for:** an assessment, with the requester noting in advance that
+  they expected parts of it to be controversial.
+- **Position:** a profile carries employer names, paths, hostnames,
+  budgets, providers, and authority choices; the standard and fictional
+  examples should be public but real profiles private by default.
+- **Verified:** no external claim to check. Acted on ahead of the sweep —
+  the author's own profile repo was created private on 2026-08-16 on
+  this basis.
+- **Disposition:** adopted — the privacy posture was applied to
+  `whharris/chevaline-whharris` immediately; the SPEC §3.2 wording change
+  remains pending.

@@ -39,6 +39,84 @@ Until the resolver (`tools/chevaline.py`) and at least two adapters exist,
 almost everything here stays Draft. That is the intended state, not a
 backlog to burn down.
 
+## Comments
+
+Comments go in an append-only `## Comments` section at the bottom of the
+RFC itself — plain text in the repo, not in a hosting service's comment
+threads. Same reasoning as the rest of the project: a clone should contain
+the whole argument, and nothing here should depend on a service being up or
+an account existing. If an RFC's comments outgrow the proposal, move them
+to a sibling `NNNN-comments.md` and link it.
+
+Realistically most reviewers will be models. That is workable, but model
+review fails differently from human review, and the record format exists to
+compensate:
+
+- **A comment is uninterpretable without knowing what was asked.** Models
+  follow framing. "Find problems with this" and "does this look good?"
+  produce different reviews of identical text, and only one of them is
+  worth much. Record the ask.
+- **Agreement between reviewers is not evidence.** Models trained on
+  overlapping data make overlapping mistakes. Five reviews converging on
+  the same point is one point, not five, and may be one shared blind spot.
+  Never count votes.
+- **Confident and wrong is the normal failure.** This project has already
+  shipped two of them — a claim about Codex's profile names that turned out
+  to be one project's local convention, and an unverified characterisation
+  of another standard's merge model. Every comment records what was
+  actually checked.
+- **A review that finds nothing is data about the reviewer**, not about the
+  RFC. Record those too, so a reviewer with a pattern of finding nothing is
+  visible.
+
+### Record format
+
+```markdown
+### C1 — 2026-08-16 · <reviewer> · <how it saw the repo>
+
+- **Asked for:** what the reviewer was actually prompted to do
+- **Position:** the substance, in a line or two
+- **Verified:** which claims were checked and how; which remain unchecked
+- **Disposition:** pending
+```
+
+`<reviewer>` should carry a model name and version where known, and say
+`unattributed` where not — a comment from an unnamed model six months ago
+cannot be weighed later. `<how it saw the repo>` matters: a reviewer given
+a paste of one file is in a different position from one that read the tree
+and ran the tests.
+
+## The sweep
+
+Comments accumulate; dispositions happen in batches. **Sweep at every minor
+spec bump, and alongside the quarterly discovery pass in
+[`../standards.md`](../standards.md)** — reusing a cadence the project
+already keeps rather than inventing a second calendar.
+
+Each open comment leaves the sweep with one disposition:
+
+- **adopted** — the RFC text changed; say what changed.
+- **rejected** — with the reason recorded. Rejections stay in the file.
+- **deferred** — a real question that only an adapter or a workflow can
+  settle. Given the evidence rule, **this should be the most common
+  outcome**, and a sweep that adopts or rejects everything is a sweep that
+  is guessing.
+- **spawned** — it was a different proposal wearing a comment's clothing;
+  name the new RFC.
+
+A disposition is **exactly one** of those five words, immediately followed
+by prose giving the reason. There is deliberately no "partially adopted"
+value: a comment whose points were taken unevenly is recorded as `adopted`
+with an explicit statement of what was *not* taken, so that the vocabulary
+stays greppable and the exclusions stay visible. If a single comment
+routinely needs several dispositions, it was really several comments and
+should be split when it is recorded.
+
+Solicit review at defined moments — when an RFC changes materially, or when
+evidence arrives — rather than continuously. Model reviewers are cheap
+enough that the binding constraint is sweep capacity, and an unswept
+backlog is worse than no comments.
+
 ## Relationship to the standards ledger
 
 [`../standards.md`](../standards.md) tracks *external* prior art and audits
