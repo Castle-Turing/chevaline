@@ -52,6 +52,13 @@ on = "merge"
 description = "test gate"
 compose = "layer"
 
+[[gates]]
+id = "cross-vendor-review"
+on = "merge"
+description = "review the branch with a different vendor's model"
+compose = "layer"
+run = "scripts/review.py"
+
 [sessions]
 isolation = "worktree"
 compose = "defer"
@@ -83,6 +90,16 @@ limits = [
 ]
 """
 
+# The run-carrying gate verbatim, for tests that remove it wholesale.
+RUN_GATE_BLOCK = """[[gates]]
+id = "cross-vendor-review"
+on = "merge"
+description = "review the branch with a different vendor's model"
+compose = "layer"
+run = "scripts/review.py"
+
+"""
+
 
 def write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +115,7 @@ class AdapterCase(unittest.TestCase):
         write(self.profile / "chevaline.toml", PROFILE_TOML)
         write(self.profile / "instructions/a.md", "# Instruction A\n\nBody A.\n")
         write(self.profile / "instructions/b.md", "# Instruction B (codex only)\n")
+        write(self.profile / "scripts/review.py", "# stand-in gate script\n")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -241,6 +259,75 @@ class TestBudgetProse(AdapterCase):
         rc, _ = self.render()
         self.assertEqual(rc, 1)
         self.assertEqual(md_before, (self.claude / "CLAUDE.md").read_text())
+
+
+class TestGatesProse(AdapterCase):
+    """Task 0002: a `run`-carrying gate renders into the CLAUDE.md region
+    as standing prose — declaration plus directive — while a run-less gate
+    keeps its report-only treatment."""
+
+    def test_run_gate_rendered_with_resolved_path_and_directive(self):
+        rc, _ = self.render()
+        self.assertEqual(rc, 0)
+        md = (self.claude / "CLAUDE.md").read_text()
+        self.assertIn("# Gates (declared policy)", md)
+        self.assertIn("`cross-vendor-review` — on `merge`", md)
+        self.assertIn("review the branch with a different vendor's model", md)
+        # The `run` path is resolved against the profile root: the reader
+        # gets a path they can execute, not a manifest-relative fragment.
+        self.assertIn(f"`{self.profile / 'scripts/review.py'}`", md)
+        # The standing directive covers work that *ends* in the on-event,
+        # and prefers a launched tool's own hook surface.
+        self.assertIn("or setting in motion work that ends", md)
+        self.assertIn("post-PR or review hook", md)
+        # Honesty: declared policy, not runtime enforcement.
+        self.assertIn("no hook in this\nharness fires a gate automatically", md)
+
+    def test_runless_gate_renders_nothing_and_stays_unsatisfied(self):
+        _, out = self.render()
+        md = (self.claude / "CLAUDE.md").read_text()
+        self.assertNotIn("second-opinion", md)
+        self.assertIn("gates.second-opinion — no `run` and no native surface; unsatisfied", out)
+
+    def test_rerender_of_unchanged_profile_is_byte_identical(self):
+        self.render()
+        md1 = (self.claude / "CLAUDE.md").read_text()
+        rc, _ = self.render()
+        self.assertEqual(rc, 0)
+        self.assertEqual(md1, (self.claude / "CLAUDE.md").read_text())
+
+    def test_removing_run_gate_unrenders_exactly_that_section(self):
+        self.render()
+        md_with = (self.claude / "CLAUDE.md").read_text()
+        ctx = adapter.ch.build_context("/nowhere", "testhost", "none")
+        effective, errors, _, _ = adapter.ch.resolve_profile(self.profile, ctx)
+        self.assertFalse(errors)
+        section = adapter.gates_section(effective, self.profile)
+        self.assertIn(section, md_with)
+
+        toml = PROFILE_TOML.replace(RUN_GATE_BLOCK, "")
+        self.assertNotIn("cross-vendor-review", toml)
+        write(self.profile / "chevaline.toml", toml)
+        rc, _ = self.render()
+        self.assertEqual(rc, 0)
+        md_without = (self.claude / "CLAUDE.md").read_text()
+        # Exactly the gates section is gone; every other byte survives.
+        self.assertEqual(md_without, md_with.replace("\n" + section, "", 1))
+        self.assertNotIn("# Gates", md_without)
+        self.assertIn("Instruction A", md_without)
+        self.assertIn("# Budget (declared policy)", md_without)
+
+    def test_run_gate_still_reported_skipped_reworded(self):
+        _, out = self.render()
+        # Task 0002 rewording: the report acknowledges the prose surface
+        # and still refuses to claim native enforcement.
+        self.assertIn("gates.cross-vendor-review", out)
+        # Phrases unique to the gates line — the budget NOT ENFORCED line
+        # shares its "standing prose" opener, so asserting on that alone
+        # would not prove the gates rewording is present.
+        self.assertIn("a directive to run its script before the gate's `on` action", out)
+        self.assertIn("still not natively enforced on this harness", out)
+        self.assertIn("the session reading the prose, not the harness, carries the gate", out)
 
 
 class TestIdempotence(AdapterCase):
