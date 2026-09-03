@@ -1,4 +1,10 @@
 Title: Render [[gates]] into the CLAUDE.md region as standing prose
+Requires: 0001-render-budget-as-launcher-directive-prose
+Requires-Because: both restructure render_region and report_unrenderable in
+adapters/claude-code/adapter.py, plus the README mapping table and the
+adapter tests; stacking avoids a mechanical conflict, and this brief tells
+the worker to match 0001's budget section shape, which only exists once
+0001's branch does.
 
 The claude-code adapter currently renders nothing for `[[gates]]`. It
 routes the section to the render report's skipped list
