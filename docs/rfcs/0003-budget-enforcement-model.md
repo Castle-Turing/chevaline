@@ -145,3 +145,62 @@ what they are.*
   similar fail-open was independently found by `tools/chevaline.py` on
   2026-08-16 and is recorded in the body of this RFC.
 - **Disposition:** pending
+
+### C2 — 2026-09-03 · Claude Fable 5 · managing-agent session in the resident's emcee checkout, after diagnosing a budget incident in the resident's own profile
+
+- **Asked for:** the resident asked why their declared per-task budget
+  was not being respected, and then why the rendered `~/.claude/CLAUDE.md`
+  contained no budget at all. This comment records what that diagnosis
+  implies for this RFC. It was not a review of the proposal as a whole.
+- **Position:** the reference adapter has the four-way separation this
+  RFC proposes half right, and the missing half caused a real incident.
+  The adapter correctly refuses to claim enforcement capability it lacks
+  — and then wrongly concludes that the **declared policy** should not be
+  rendered either. `[budget]` is routed to the render report's NOT
+  ENFORCED section only: a warning printed once, to whoever runs the
+  render, and never again. The declared policy is invisible to every
+  later session that acts under the rendered config.
+
+  That matters because "the harness cannot enforce budget" is not the
+  same claim as "budget has no surface in the harness." A session reading
+  the rendered CLAUDE.md is often the *launcher* of other metered
+  workloads, and composes their invocations — including spend caps those
+  runtimes genuinely enforce. For that role, rendered prose is an
+  effective (not guaranteed) control surface, and this adapter already
+  uses exactly that surface for the untranslatable telling-half of the
+  `reported` authority level. Budget got the report treatment where it
+  should have gotten the prose treatment as well.
+
+  Two refinements to the proposal follow. First, between **declared
+  policy** and **enforcement capability** there is a distinct concern
+  this RFC should name: **statement** — whether the policy is placed in
+  front of the agents acting under the config, independent of whether
+  anything enforces it. A non-enforcing adapter can still be a stating
+  adapter, and the fail-open observed in practice was a statement
+  failure, not an enforcement failure. Second, enforcement capability is
+  not binary per harness: a harness non-enforcing for its own spend can
+  launch runtimes that do enforce (emcee's `--budget` is a real runtime
+  brake). The capability taxonomy should distinguish self-enforcement
+  from delegated enforcement, because the latter is the first place a
+  declared dollar limit can actually bind today.
+
+  On reviewer question 1: "declare policy and explicitly disclaim
+  enforcement" is the right half-answer, but declaring must mean
+  declaring into the harness's standing context, not only into a
+  render-time report. A disclaimer nobody re-reads is
+  indistinguishable from silence.
+- **Verified:** the rendered `~/.claude/CLAUDE.md` in the incident
+  contains zero occurrences of "budget" or "USD" (grep, 2026-09-03);
+  `adapters/claude-code/adapter.py` routes `[budget]` exclusively to
+  `report_unrenderable`; the resident's profile declared a 25 USD
+  per-task-run cap for their emcee environment; the launch command in
+  actual use carried no `--budget`, so emcee's internal 10 USD default
+  bound instead; emcee's run journals record three tasks killed at that
+  10 USD cap (2026-09-02 and 2026-09-03), two of which later completed
+  at 14–17 USD when given headroom. Not checked: whether current Claude
+  Code or Codex configuration has grown a native spend-cap mechanism
+  (reviewer question 3 remains open); no claim is made here either way.
+- **Disposition:** pending. Companion implementation work is briefed in
+  `docs/tasks/0001-render-budget-as-launcher-directive-prose.md` — an
+  adapter change only; it needs nothing from this RFC to land, but is
+  evidence for it.
