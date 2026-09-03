@@ -63,6 +63,24 @@ default = "reported"
 "fs.write" = "silent"
 "vcs.commit" = "reported"
 "vcs.push" = "approval"
+
+[[environment]]
+name = "emcee"
+when = { path = "/emceeland*" }
+
+[environment.budget]
+on_exceed = "halt"
+limits = [
+  { scope = "*", window = "session", amount = 25, unit = "USD" },
+]
+"""
+
+# The base [budget] block verbatim, for tests that remove it wholesale.
+BUDGET_BLOCK = """[budget]
+on_exceed = "halt"
+limits = [
+  { scope = "*", window = "session", amount = 10, unit = "USD" },
+]
 """
 
 
@@ -84,14 +102,14 @@ class AdapterCase(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def render(self, *extra: str) -> tuple[int, str]:
+    def render(self, *extra: str, cwd: str = "/nowhere") -> tuple[int, str]:
         argv = [
             "render",
             str(self.profile),
             "--claude-dir",
             str(self.claude),
             "--cwd",
-            "/nowhere",
+            cwd,
             "--hostname",
             "testhost",
             "--git-org",
@@ -140,11 +158,89 @@ class TestFirstRender(AdapterCase):
         rc, out = self.render()
         self.assertIn("NOT ENFORCED", out)
         self.assertIn("budget", out)
+        # Task 0001 rewording: the report acknowledges the prose surface and
+        # still refuses to claim runtime enforcement.
+        self.assertIn("stated as standing prose in the CLAUDE.md region", out)
+        self.assertIn("still NOT runtime-enforced", out)
 
     def test_gate_and_sessions_reported_skipped(self):
         _, out = self.render()
         self.assertIn("gates.second-opinion", out)
         self.assertIn("sessions.isolation", out)
+
+
+class TestBudgetProse(AdapterCase):
+    """Task 0001: [budget] renders into the CLAUDE.md region as declared
+    policy plus a launcher directive, context-independently."""
+
+    def test_budget_section_rendered_with_directive_and_override(self):
+        rc, _ = self.render()
+        self.assertEqual(rc, 0)
+        md = (self.claude / "CLAUDE.md").read_text()
+        self.assertIn("# Budget (declared policy)", md)
+        self.assertIn('`on_exceed = "halt"`', md)
+        self.assertIn("10 USD per session, aggregate over all spend", md)
+        # The launcher directive: pass the cap along, or the launched tool's
+        # own default silently wins.
+        self.assertIn("emcee --budget", md)
+        self.assertIn("silently wins", md)
+        # The declared environment override, with its selector, rendered
+        # even though this render's cwd does not match it.
+        self.assertIn("under `/emceeland*` (environment `emcee`)", md)
+        self.assertIn("25 USD per session, aggregate over all spend", md)
+        # Honesty: declared policy, not runtime enforcement.
+        self.assertIn("not runtime enforcement", md)
+
+    def test_render_is_identical_whatever_cwd(self):
+        rc1, _ = self.render()
+        self.assertEqual(rc1, 0)
+        md1 = (self.claude / "CLAUDE.md").read_text()
+        s1 = (self.claude / "settings.json").read_text()
+        # Re-render from a cwd where the emcee environment matches; the
+        # environment really matches (asserted via the report), but the
+        # rendered files must not change.
+        rc2, out2 = self.render(cwd="/emceeland/project")
+        self.assertEqual(rc2, 0)
+        self.assertIn("emcee: MATCHED", out2)
+        self.assertEqual(md1, (self.claude / "CLAUDE.md").read_text())
+        self.assertEqual(s1, (self.claude / "settings.json").read_text())
+
+    def test_removing_budget_unrenders_exactly_that_section(self):
+        # End-to-end, a budget-less profile is invalid (SPEC §3.5 requires
+        # an aggregate limit), so the un-render invariant is exercised at
+        # the render_region level: same profile, with and without [budget].
+        self.render()
+        md_with = (self.claude / "CLAUDE.md").read_text()
+        raw, errors = adapter.ch.load_manifest(self.profile)
+        self.assertFalse(errors)
+        section = adapter.budget_section(raw)
+        self.assertIn(section, md_with)
+
+        ctx = adapter.ch.build_context("/nowhere", "testhost", "none")
+        effective, errors, _, _ = adapter.ch.resolve_profile(self.profile, ctx)
+        self.assertFalse(errors)
+        effective.pop("budget")
+        raw.pop("budget")
+        region = adapter.render_region(effective, raw, self.profile, adapter.Report())
+        md_without = adapter.splice_claude_md(md_with, region)
+        # Exactly the budget section is gone; every other byte survives.
+        self.assertEqual(md_without, md_with.replace("\n" + section, "", 1))
+        self.assertNotIn("# Budget", md_without)
+        self.assertIn("Instruction A", md_without)
+        self.assertIn("Standing authority expectations", md_without)
+
+    def test_budgetless_profile_is_refused_not_rerendered(self):
+        # The CLI-level counterpart: removing [budget] wholesale makes the
+        # profile invalid, and the adapter refuses rather than re-rendering,
+        # so the previous render (budget section included) stays intact.
+        self.render()
+        md_before = (self.claude / "CLAUDE.md").read_text()
+        toml = PROFILE_TOML.replace(BUDGET_BLOCK, "")
+        self.assertNotIn("[budget]\n", toml)
+        write(self.profile / "chevaline.toml", toml)
+        rc, _ = self.render()
+        self.assertEqual(rc, 1)
+        self.assertEqual(md_before, (self.claude / "CLAUDE.md").read_text())
 
 
 class TestIdempotence(AdapterCase):
