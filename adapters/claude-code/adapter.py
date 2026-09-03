@@ -27,7 +27,10 @@ resident already set by hand, the adapter reports the conflict and yields
 
 This is a NON-ENFORCING adapter in the sense of SPEC §4.1: it renders
 configuration and cannot stop a model call at runtime. Budget limits are
-therefore reported as UNENFORCED, prominently, on every render.
+therefore stated as standing prose in CLAUDE.md — the declared policy plus
+a directive to pass the applicable cap to tools that do enforce one (task
+0001, RFC 0003 C2) — and still reported as UNENFORCED, prominently, on
+every render.
 """
 
 from __future__ import annotations
@@ -182,9 +185,101 @@ def applicable_instructions(effective: dict) -> list[dict]:
     return out
 
 
-def render_region(effective: dict, profile_dir: Path, report: Report) -> str:
-    """The text between the markers: concatenated instructions, then the
-    reporting half of any `reported` authority classes."""
+def describe_limit(entry: Any) -> str:
+    """One budget limit as prose: amount, unit, window, scope."""
+    if not isinstance(entry, dict):
+        return repr(entry)
+    scope = entry.get("scope")
+    scope_txt = "aggregate over all spend" if scope == "*" else f"scope `{scope}`"
+    return f"{entry.get('amount')} {entry.get('unit')} per {entry.get('window')}, {scope_txt}"
+
+
+def describe_selector(when: Any) -> str:
+    """An environment's `when` predicates as one phrase, for the override
+    lines in the budget section. A `when`-less environment still renders —
+    it can be activated at any time via --environment (SPEC §3.2)."""
+    if not isinstance(when, dict) or not when:
+        return "when explicitly activated"
+    phrases = []
+    for key, val in when.items():
+        if key == "path":
+            phrases.append(f"under `{val}`")
+        elif key == "hostname":
+            phrases.append(f"on host `{val}`")
+        elif key == "git_org":
+            phrases.append(f"in git org `{val}`")
+        elif key == "env":
+            phrases.append(f"when `{val}` is in the process environment")
+        else:
+            phrases.append(f"when `{key}` matches `{val}`")
+    return ", ".join(phrases)
+
+
+def budget_section(raw: dict) -> str | None:
+    """The budget prose for the CLAUDE.md region: the declared policy,
+    stated as a standing directive to the reading session in its role as
+    launcher of other metered workloads (task 0001, RFC 0003 C2).
+
+    Built from the RAW manifest, not the resolved config: a global render
+    must be byte-identical regardless of the context it runs in (README,
+    "Environments and a global render"), so the base budget and every
+    *declared* [[environment]] override are read pre-resolution and
+    environment matching never changes what this section says.
+    """
+    budget = raw.get("budget")
+    if not isinstance(budget, dict):
+        return None
+    on_exceed = budget.get("on_exceed")
+    lines = [
+        "# Budget (declared policy)\n",
+        "The profile declares spend limits"
+        + (f' with `on_exceed = "{on_exceed}"`' if on_exceed else "")
+        + ":\n",
+    ]
+    for entry in budget.get("limits", []) or []:
+        lines.append(f"- {describe_limit(entry)}")
+
+    overrides = []
+    for env in raw.get("environment", []) or []:
+        if not isinstance(env, dict) or not isinstance(env.get("budget"), dict):
+            continue
+        # SPEC §2.1 merge, applied to [budget] alone: on_exceed (scalar) and
+        # limits (array) both replace wholesale, so a shallow merge is exact.
+        merged = {**budget, **env["budget"]}
+        if merged == budget:
+            continue
+        limits_txt = "; ".join(describe_limit(e) for e in merged.get("limits", []) or [])
+        merged_on_exceed = merged.get("on_exceed")
+        if merged_on_exceed != on_exceed and merged_on_exceed is not None:
+            limits_txt += f' — `on_exceed = "{merged_on_exceed}"`'
+        overrides.append(
+            f"- {describe_selector(env.get('when'))} (environment "
+            f"`{env.get('name')}`): {limits_txt}"
+        )
+    if overrides:
+        lines.append(
+            "\nDeclared environment overrides — where an environment's selector\n"
+            "matches, its limits below are in force instead of the base limits:\n"
+        )
+        lines.extend(overrides)
+
+    lines.append(
+        "\nWhen composing an invocation of any tool or harness that accepts a\n"
+        "spend cap (for example `emcee --budget`), pass the applicable amount\n"
+        "from this section. If the flag is left off, that tool's own default\n"
+        "silently wins over this declared policy.\n"
+    )
+    lines.append(
+        "This is declared policy, not runtime enforcement: nothing in this\n"
+        "harness halts a model call at a spend threshold."
+    )
+    return "\n".join(lines) + "\n"
+
+
+def render_region(effective: dict, raw: dict, profile_dir: Path, report: Report) -> str:
+    """The text between the markers: concatenated instructions, the
+    reporting half of any `reported` authority classes, then the declared
+    budget as launcher-directive prose."""
     parts: list[str] = []
     resident = effective.get("resident", {})
     name = resident.get("name") if isinstance(resident, dict) else None
@@ -222,6 +317,10 @@ def render_region(effective: dict, profile_dir: Path, report: Report) -> str:
             gloss = ACTION_GLOSS.get(cls, cls)
             lines.append(f"- `{cls}` — {gloss}: do it, then say you did.")
         parts.append("\n".join(lines) + "\n")
+
+    section = budget_section(raw)
+    if section is not None:
+        parts.append(section)
 
     return "\n".join(parts)
 
@@ -433,7 +532,7 @@ def apply_settings(
 
 
 # --------------------------------------------------------------------------
-# Sections with no render surface (reported, per SPEC §4 item 5 / §4.1)
+# Sections with no enforcing surface (reported, per SPEC §4 item 5 / §4.1)
 # --------------------------------------------------------------------------
 
 
@@ -447,12 +546,12 @@ def report_unrenderable(effective: dict, explain: dict, report: Report) -> None:
             if isinstance(e, dict)
         )
         report.unenforced.append(
-            f"budget ({described}; on_exceed={budget.get('on_exceed')!r}) — this is "
-            "a config-rendering adapter with no runtime enforcement surface; no "
-            "Claude Code setting stops a model call at a spend threshold. The "
-            "profile is NOT enforced on this harness (SPEC §4.1: a non-enforcing "
-            "adapter must say so). A PreToolUse hook reading provider usage is "
-            "the intended future mechanism."
+            f"budget ({described}; on_exceed={budget.get('on_exceed')!r}) — stated "
+            "as standing prose in the CLAUDE.md region (declared policy plus a "
+            "launcher directive), but still NOT runtime-enforced on this harness: "
+            "no Claude Code setting stops a model call at a spend threshold "
+            "(SPEC §4.1: a non-enforcing adapter must say so). A PreToolUse hook "
+            "reading provider usage is the intended future mechanism."
         )
 
     for gate in effective.get("gates", []) or []:
@@ -489,6 +588,9 @@ def report_unrenderable(effective: dict, explain: dict, report: Report) -> None:
     # Environments that contributed to a *rendered* surface deserve a loud
     # note: this render is global, but path/git_org selectors vary per
     # project, so the resident should know context leaked into ~/.claude.
+    # `budget` renders into CLAUDE.md too but is deliberately absent here:
+    # its section is built from the raw manifest (see budget_section), so
+    # environment matching cannot leak into it.
     rendered_prefixes = ("instructions", "authority", "models", "resident")
     contaminated = {
         env for path, env in explain.get("sources", {}).items()
@@ -537,8 +639,11 @@ def cmd_render(args: argparse.Namespace) -> int:
     report = Report()
     report.environments = explain["environments"]
 
-    # CLAUDE.md
-    region = render_region(effective, profile_dir, report)
+    # CLAUDE.md. The budget section renders from the raw manifest —
+    # resolve_profile strips [[environment]] out of `effective`, and the
+    # declared overrides must appear regardless of what matched here.
+    raw, _ = ch.load_manifest(profile_dir)
+    region = render_region(effective, raw or {}, profile_dir, report)
     md_path = claude_dir / "CLAUDE.md"
     existing_md = md_path.read_text() if md_path.is_file() else None
     new_md = splice_claude_md(existing_md, region)

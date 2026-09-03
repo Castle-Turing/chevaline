@@ -40,7 +40,7 @@ Non-clobbering consequences, all tested in `test_adapter.py`:
 | `[models]` | `standard` tier → `settings.json` `model`; other tiers reported as unexpressed |
 | `[harnesses]` | Decides whether this adapter runs at all (`prefer` without `claude-code` → decline) |
 | `[[environment]]` | Resolved before rendering, never rendered; the report names what matched and why |
-| `[budget]` | **No surface — reported as NOT ENFORCED** (see below) |
+| `[budget]` | `CLAUDE.md` prose: declared limits plus a standing launcher directive — **still reported as NOT ENFORCED** (see below) |
 | `[[gates]]`, `[sessions]`, `[[extensions]]` | No settled surface; reported as skipped |
 
 ### Authority
@@ -74,11 +74,36 @@ prominently. The intended future mechanism is a `PreToolUse` hook reading
 provider-reported usage; until that exists this adapter will keep saying
 the cap does not bind here.
 
+Not enforcing is not the same as not stating, though: a session reading
+the rendered `CLAUDE.md` is often the *launcher* of other metered
+workloads, and composes their invocations — including spend caps those
+runtimes really do enforce (RFC 0003 comment C2 records the incident where
+policy left only in the render report cost real money). So `[budget]`
+renders into the `CLAUDE.md` region as prose, on the same surface the
+`reported` authority level already uses:
+
+- the declared base limits — each one's scope, window, amount, and unit,
+  plus `on_exceed`, rendered literally (a profile change means a
+  re-render, like every other section);
+- one line per declared `[[environment]]` whose budget differs, labeled
+  with its selector — pulled from the raw manifest, not the resolved
+  config, so environment matching never changes the rendered bytes;
+- a standing directive to the reading session: when composing an
+  invocation of any tool that accepts a spend cap (for example
+  `emcee --budget`), pass the applicable amount, because an absent flag
+  means that tool's own default silently wins;
+- a plain statement that this is declared policy, not runtime
+  enforcement — nothing in this harness halts a call at the threshold.
+
 ### Environments and a global render
 
 `~/.claude` is global, but `path`/`git_org` selectors vary per project.
-That is fine while matched environments only override unrendered sections
-(budget, typically). If a matched environment contributes to a *rendered*
-surface (instructions, authority, models), the report flags it as a
-context-dependent render so the resident knows project-specific values
-leaked into global config.
+That is fine while matched environments only override sections whose
+render does not depend on resolution. If a matched environment
+contributes to a resolution-dependent surface (instructions, authority,
+models), the report flags it as a context-dependent render so the
+resident knows project-specific values leaked into global config. The
+budget section is immune by construction: it renders from the raw
+manifest — base limits plus every *declared* environment override,
+labeled with its selector — so its bytes are identical whatever context
+the render runs in.
