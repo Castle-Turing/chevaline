@@ -183,10 +183,10 @@ class TestBudgetProse(AdapterCase):
         # The launcher directive: pass the cap along, or the launched tool's
         # own default silently wins.
         self.assertIn("emcee --budget", md)
-        self.assertIn("silently wins", md)
+        self.assertIn("silently\nwins over this declared policy", md)
         # The declared environment override, with its selector, rendered
         # even though this render's cwd does not match it.
-        self.assertIn("under `/emceeland*` (environment `emcee`)", md)
+        self.assertIn("environment `emcee` — under `/emceeland*`", md)
         self.assertIn("25 USD per session, aggregate over all spend", md)
         # Honesty: declared policy, not runtime enforcement.
         self.assertIn("not runtime enforcement", md)
@@ -229,6 +229,18 @@ class TestBudgetProse(AdapterCase):
         self.assertIn("Instruction A", md_without)
         self.assertIn("Standing authority expectations", md_without)
 
+    def test_override_lines_state_the_declaration_order_rule(self):
+        # The header must not claim a single matching environment's limits
+        # are the ones in force: environments compose in declaration order
+        # (SPEC §2.1), so several can apply at once and the last declared
+        # value of each field wins.
+        rc, _ = self.render()
+        self.assertEqual(rc, 0)
+        md = (self.claude / "CLAUDE.md").read_text()
+        self.assertIn("compose in the declaration order below", md)
+        self.assertIn("later\nwinning over earlier", md)
+        self.assertNotIn("in force instead of the base limits", md)
+
     def test_budgetless_profile_is_refused_not_rerendered(self):
         # The CLI-level counterpart: removing [budget] wholesale makes the
         # profile invalid, and the adapter refuses rather than re-rendering,
@@ -241,6 +253,66 @@ class TestBudgetProse(AdapterCase):
         rc, _ = self.render()
         self.assertEqual(rc, 1)
         self.assertEqual(md_before, (self.claude / "CLAUDE.md").read_text())
+
+
+class TestBudgetOverrideLabels(unittest.TestCase):
+    """PR #2 review: what an override line claims about when it applies.
+    budget_section is called directly — these cases turn on the raw
+    manifest's shape, not on anything the resolver does with it."""
+
+    BASE = {"on_exceed": "halt", "limits": [
+        {"scope": "*", "window": "session", "amount": 10, "unit": "USD"},
+    ]}
+
+    def section(self, *envs: dict) -> str:
+        return adapter.budget_section({"budget": self.BASE, "environment": list(envs)})
+
+    def env(self, name: str, when: dict | None, amount: int = 25, **extra) -> dict:
+        e = {"name": name, "budget": {"limits": [
+            {"scope": "*", "window": "session", "amount": amount, "unit": "USD"},
+        ], **extra}}
+        if when is not None:
+            e["when"] = when
+        return e
+
+    def test_explicit_activation_is_named_even_with_a_selector(self):
+        # --environment bypasses `when` entirely (SPEC §3.2), so a line that
+        # names only the selector understates when the override applies.
+        section = self.section(self.env("work", {"git_org": "Castle-Turing"}))
+        self.assertIn("in git org `Castle-Turing`, or when explicitly activated by name", section)
+
+    def test_whenless_environment_says_activation_only(self):
+        section = self.section(self.env("manual", None))
+        self.assertIn("applies only when explicitly activated by name", section)
+
+    def test_unknown_selector_renders_as_never_matching(self):
+        # The resolver fails an unknown selector closed (SPEC §2.1); the
+        # prose must not read like a condition that could hold.
+        section = self.section(self.env("future", {"region": "eu-west"}))
+        self.assertIn("never matches automatically", section)
+        self.assertIn("`region` is a selector this adapter does not support", section)
+        self.assertIn("fails closed", section)
+        self.assertNotIn("when `region` matches `eu-west`", section)
+
+    def test_environment_matching_the_base_still_renders(self):
+        # Nil against the base alone, but load-bearing under composition: it
+        # resets a preceding environment's override back to the base.
+        raised = self.env("raise", {"path": "/a*"}, amount=25)
+        reset = self.env("reset", {"path": "/a/b*"}, amount=10)
+        section = self.section(raised, reset)
+        self.assertIn("environment `reset`", section)
+        self.assertLess(section.index("environment `raise`"), section.index("environment `reset`"))
+
+    def test_each_line_is_merged_against_the_base_not_accumulated(self):
+        # `later` changes only on_exceed. Merged against the base it keeps
+        # the base's 10 USD; accumulating would show it carrying 25.
+        section = self.section(
+            self.env("earlier", {"path": "/a*"}, amount=25),
+            {"name": "later", "when": {"path": "/b*"}, "budget": {"on_exceed": "warn"}},
+        )
+        later_line = [l for l in section.splitlines() if "`later`" in l][0]
+        self.assertIn("10 USD per session", later_line)
+        self.assertIn('`on_exceed = "warn"`', later_line)
 
 
 class TestIdempotence(AdapterCase):

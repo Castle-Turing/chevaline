@@ -195,12 +195,24 @@ def describe_limit(entry: Any) -> str:
 
 
 def describe_selector(when: Any) -> str:
-    """An environment's `when` predicates as one phrase, for the override
-    lines in the budget section. A `when`-less environment still renders —
-    it can be activated at any time via --environment (SPEC §3.2)."""
+    """When an environment applies, as one phrase for the budget override
+    lines.
+
+    Explicit activation is named on *every* line, not only for `when`-less
+    environments: `--environment NAME` bypasses `when` entirely (SPEC §3.2),
+    so a selector that does not hold is not evidence the override is
+    inapplicable, and a session that activated the environment by name would
+    otherwise read the base cap as the one in force.
+
+    A selector the resolver does not know renders as never matching, not as
+    a usable predicate. The resolver fails such an environment closed
+    (SPEC §2.1, `ch.KNOWN_SELECTORS`), so prose that reads like an ordinary
+    condition would be the one place in the pipeline treating it as live.
+    """
     if not isinstance(when, dict) or not when:
-        return "when explicitly activated"
+        return "applies only when explicitly activated by name"
     phrases = []
+    unsupported = []
     for key, val in when.items():
         if key == "path":
             phrases.append(f"under `{val}`")
@@ -210,9 +222,20 @@ def describe_selector(when: Any) -> str:
             phrases.append(f"in git org `{val}`")
         elif key == "env":
             phrases.append(f"when `{val}` is in the process environment")
-        else:
+        elif key in ch.KNOWN_SELECTORS:
+            # Known to the resolver, no bespoke phrasing here yet.
             phrases.append(f"when `{key}` matches `{val}`")
-    return ", ".join(phrases)
+        else:
+            unsupported.append(key)
+    if unsupported:
+        names = ", ".join(f"`{k}`" for k in unsupported)
+        verb = "is a selector" if len(unsupported) == 1 else "are selectors"
+        return (
+            f"never matches automatically — {names} {verb} this adapter does "
+            "not support, and an unknown selector fails closed (SPEC §2.1); "
+            "applies only when explicitly activated by name"
+        )
+    return ", ".join(phrases) + ", or when explicitly activated by name"
 
 
 def budget_section(raw: dict) -> str | None:
@@ -225,6 +248,11 @@ def budget_section(raw: dict) -> str | None:
     "Environments and a global render"), so the base budget and every
     *declared* [[environment]] override are read pre-resolution and
     environment matching never changes what this section says.
+
+    That context-independence is why each override line is merged against
+    the base alone rather than accumulated: the section states the declared
+    policy and the composition rule, and the reading session — which is the
+    only party that knows which environments actually apply — composes them.
     """
     budget = raw.get("budget")
     if not isinstance(budget, dict):
@@ -245,29 +273,38 @@ def budget_section(raw: dict) -> str | None:
             continue
         # SPEC §2.1 merge, applied to [budget] alone: on_exceed (scalar) and
         # limits (array) both replace wholesale, so a shallow merge is exact.
+        # Merged against the BASE only — each line is one environment's
+        # declaration, not a running total. Environments that both apply
+        # compose in declaration order, which the section header states and
+        # the reading session performs; accumulating here instead would
+        # render a cumulative prefix that is only correct when every earlier
+        # environment also matched.
         merged = {**budget, **env["budget"]}
-        if merged == budget:
-            continue
         limits_txt = "; ".join(describe_limit(e) for e in merged.get("limits", []) or [])
         merged_on_exceed = merged.get("on_exceed")
         if merged_on_exceed != on_exceed and merged_on_exceed is not None:
             limits_txt += f' — `on_exceed = "{merged_on_exceed}"`'
         overrides.append(
-            f"- {describe_selector(env.get('when'))} (environment "
-            f"`{env.get('name')}`): {limits_txt}"
+            f"- environment `{env.get('name')}` — "
+            f"{describe_selector(env.get('when'))}: {limits_txt}"
         )
     if overrides:
         lines.append(
-            "\nDeclared environment overrides — where an environment's selector\n"
-            "matches, its limits below are in force instead of the base limits:\n"
+            "\nDeclared environment overrides. Each line is one environment's\n"
+            "budget merged onto the base above, on its own. Where more than one\n"
+            "applies at once they compose in the declaration order below, later\n"
+            "winning over earlier (SPEC §2.1), so the cap in force is the last\n"
+            "declared value of each field among those that apply — not\n"
+            "necessarily any single line as written:\n"
         )
         lines.extend(overrides)
 
     lines.append(
         "\nWhen composing an invocation of any tool or harness that accepts a\n"
-        "spend cap (for example `emcee --budget`), pass the applicable amount\n"
-        "from this section. If the flag is left off, that tool's own default\n"
-        "silently wins over this declared policy.\n"
+        "spend cap (for example `emcee --budget`), work out which of the above\n"
+        "apply here, compose them in the order given, and pass the resulting\n"
+        "amount. If the flag is left off, that tool's own default silently\n"
+        "wins over this declared policy.\n"
     )
     lines.append(
         "This is declared policy, not runtime enforcement: nothing in this\n"
