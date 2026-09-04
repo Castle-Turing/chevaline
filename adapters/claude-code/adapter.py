@@ -120,14 +120,42 @@ ACTION_GLOSS: dict[str, str] = {
     "exec.install": "installing tools onto the machine",
 }
 
-# One-line glosses for a gate's `compose` mode (SPEC §2.2: additive
-# sections take layer/defer/insist, defaulting to layer), used when
-# rendering gates as prose.
-COMPOSE_GLOSS: dict[str, str] = {
-    "layer": "it runs in addition to any gate the project itself requires",
-    "defer": "a project gate on the same event takes its place",
-    "insist": "it runs even where the project has its own equivalent",
+# What a gate's `compose` mode actually directs the reading session to do
+# (SPEC §2.2: additive sections take layer/defer/insist, defaulting to
+# layer). These are directives, not glosses: only `layer` means "run it
+# unconditionally", so a single unconditional instruction would tell a
+# session to run a deferred gate the project's own convention should have
+# displaced, and to run an insisted gate straight through a conflict it is
+# supposed to stop at. `{script}` is the resolved path, `{on}` the event.
+COMPOSE_DIRECTIVE: dict[str, str] = {
+    "layer": (
+        "Run `{script}`. Compose `layer`: it runs in addition to any gate "
+        "the project itself requires, so a project gate on `{on}` does not "
+        "excuse skipping this one."
+    ),
+    "defer": (
+        "Compose `defer`: run `{script}` only where the project has no gate "
+        "of its own on `{on}`. Where the project does, its convention takes "
+        "this gate's place and this one is not run."
+    ),
+    "insist": (
+        "Compose `insist`: run `{script}`. If the project's own convention "
+        "on `{on}` conflicts with it, do not quietly yield to the project "
+        "and do not run over it — stop, surface the conflict, and wait."
+    ),
 }
+
+# A gate whose `compose` is none of the above. The validator rejects these,
+# so reaching this text means the profile outran the adapter (a mode from a
+# newer spec version, say). Rendering an unconditional `Run` for a mode
+# whose composition rule is unknown is the failure this table exists to
+# avoid, so the fallback states the mode is unevaluable and stops.
+COMPOSE_UNKNOWN = (
+    "Compose `{compose}` is not a mode this adapter can evaluate for a gate "
+    "(SPEC §2.2 allows `layer`, `defer`, and `insist` here). Do not run "
+    "`{script}` on the strength of this section — treat the gate as "
+    "unresolved and ask the resident."
+)
 
 # Which tier binds to settings.json's single `model` key. Claude Code's
 # global config carries exactly one default model, and the resident's
@@ -303,6 +331,12 @@ def gates_section(effective: dict, profile_dir: Path) -> str | None:
 
     A gate without `run` renders nothing: there is nothing actionable to
     state, and it stays in the render report as unsatisfied.
+
+    Each gate's directive is conditioned on its `compose` mode — see
+    COMPOSE_DIRECTIVE. The adapter cannot detect whether a project has a
+    gate of its own (SPEC §2.2 leaves detection harness-specific and out of
+    scope for v0.3), so the prose states the condition and leaves the
+    reading session to evaluate it.
     """
     gates = [
         g for g in effective.get("gates", []) or []
@@ -315,21 +349,25 @@ def gates_section(effective: dict, profile_dir: Path) -> str | None:
         "The profile declares standing gates on the resident's own work. Before",
         "performing a gate's `on` action — or setting in motion work that ends",
         "in it, such as opening a PR or launching a harness that opens PRs —",
-        "run the gate's script and surface its findings. When launching a tool",
-        "that accepts a post-PR or review hook, pass the script there rather",
-        "than running it by hand afterwards.\n",
+        "apply the gate as its `compose` mode below directs, and surface what it",
+        "finds. When launching a tool that accepts a post-PR or review hook, pass",
+        "the script there rather than running it by hand afterwards.\n",
     ]
     for gate in gates:
         # `run` is profile-relative in the manifest (SPEC §3.7); the reader
         # of ~/.claude/CLAUDE.md needs a path they can actually execute.
         script = profile_dir / gate["run"]
         desc = gate.get("description")
+        # SPEC §2.2 makes `layer` the default for additive sections.
         compose = gate.get("compose", "layer")
-        gloss = COMPOSE_GLOSS.get(compose, compose)
+        template = COMPOSE_DIRECTIVE.get(compose, COMPOSE_UNKNOWN)
+        directive = template.format(
+            script=script, on=gate.get("on"), compose=compose
+        )
         lines.append(
             f"- `{gate.get('id')}` — on `{gate.get('on')}`"
             + (f": {desc}." if desc else ".")
-            + f"\n  Run `{script}` (compose `{compose}`: {gloss})."
+            + f"\n  {directive}"
         )
     lines.append(
         "\nThis is declared policy, not runtime enforcement: no hook in this\n"
@@ -627,8 +665,9 @@ def report_unrenderable(effective: dict, explain: dict, report: Report) -> None:
         report.skipped.append(
             f"gates.{gate.get('id')} (on={gate.get('on')!r}, "
             f"compose={gate.get('compose', 'layer')!r}) — stated as standing "
-            "prose in the CLAUDE.md region (the declaration plus a directive "
-            "to run its script before the gate's `on` action), but still not "
+            "prose in the CLAUDE.md region (the declaration plus a directive, "
+            "conditioned on the compose mode, for its script and the gate's "
+            "`on` action), but still not "
             "natively enforced on this harness: Claude Code has no "
             f"user-level hook surface that fires on {gate.get('on')}, so the "
             "session reading the prose, not the harness, carries the gate"

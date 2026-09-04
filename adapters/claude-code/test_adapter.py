@@ -325,9 +325,67 @@ class TestGatesProse(AdapterCase):
         # Phrases unique to the gates line — the budget NOT ENFORCED line
         # shares its "standing prose" opener, so asserting on that alone
         # would not prove the gates rewording is present.
-        self.assertIn("a directive to run its script before the gate's `on` action", out)
+        self.assertIn(
+            "a directive, conditioned on the compose mode, for its script "
+            "and the gate's `on` action",
+            out,
+        )
         self.assertIn("still not natively enforced on this harness", out)
         self.assertIn("the session reading the prose, not the harness, carries the gate", out)
+
+
+class TestGateComposeModes(AdapterCase):
+    """PR #3 review, P1: the rendered directive is conditioned on the gate's
+    `compose` mode. Only `layer` means run it unconditionally — an
+    unconditional line would send a session to run a `defer` gate the
+    project's own convention should have displaced, and to run an `insist`
+    gate straight through the conflict it exists to stop at (SPEC §2.2)."""
+
+    def render_with_compose(self, mode: str) -> str:
+        block = RUN_GATE_BLOCK.replace('compose = "layer"', f'compose = "{mode}"')
+        write(self.profile / "chevaline.toml", PROFILE_TOML.replace(RUN_GATE_BLOCK, block))
+        rc, _ = self.render()
+        self.assertEqual(rc, 0)
+        return (self.claude / "CLAUDE.md").read_text()
+
+    def test_layer_directs_an_unconditional_run(self):
+        md = self.render_with_compose("layer")
+        self.assertIn(f"Run `{self.profile / 'scripts/review.py'}`. Compose `layer`:", md)
+        self.assertIn("a project gate on `merge` does not excuse skipping this one", md)
+
+    def test_defer_runs_only_where_the_project_has_no_gate(self):
+        md = self.render_with_compose("defer")
+        self.assertIn("Compose `defer`: run", md)
+        self.assertIn("only where the project has no gate of its own on `merge`", md)
+        self.assertIn("this one is not run", md)
+        # The unconditional form must be gone, not merely accompanied.
+        self.assertNotIn(f"Run `{self.profile / 'scripts/review.py'}`. Compose", md)
+
+    def test_insist_stops_on_a_conflict_rather_than_yielding_or_overriding(self):
+        md = self.render_with_compose("insist")
+        self.assertIn("Compose `insist`: run", md)
+        self.assertIn("do not quietly yield to the project and do not run over it", md)
+        self.assertIn("stop, surface the conflict, and wait", md)
+
+    def test_unknown_mode_renders_as_unevaluable_and_withholds_the_run(self):
+        # The validator rejects a mode outside layer/defer/insist for a gate,
+        # so this state means the profile outran the adapter — a mode from a
+        # newer spec version. gates_section is called directly because the
+        # resolver would refuse the profile before rendering.
+        effective = {
+            "gates": [
+                {
+                    "id": "future-gate",
+                    "on": "merge",
+                    "compose": "quorum",
+                    "run": "scripts/review.py",
+                }
+            ]
+        }
+        section = adapter.gates_section(effective, self.profile)
+        self.assertIn("Compose `quorum` is not a mode this adapter can evaluate", section)
+        self.assertIn("Do not run", section)
+        self.assertNotIn(f"Run `{self.profile / 'scripts/review.py'}`. Compose", section)
 
 
 class TestIdempotence(AdapterCase):

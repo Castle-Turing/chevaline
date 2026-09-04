@@ -41,7 +41,7 @@ Non-clobbering consequences, all tested in `test_adapter.py`:
 | `[harnesses]` | Decides whether this adapter runs at all (`prefer` without `claude-code` → decline) |
 | `[[environment]]` | Resolved before rendering, never rendered; the report names what matched and why |
 | `[budget]` | `CLAUDE.md` prose: declared limits plus a standing launcher directive — **still reported as NOT ENFORCED** (see below) |
-| `[[gates]]` | `CLAUDE.md` prose for gates carrying a `run` script: the declaration plus a standing directive to run the script, with the path resolved against the profile root — **still reported as skipped**, because nothing fires it (see below). A gate without `run` renders nothing and is reported unsatisfied |
+| `[[gates]]` | `CLAUDE.md` prose for gates carrying a `run` script: the declaration plus a standing directive conditioned on the gate's `compose` mode, with the path resolved against the profile root — **still reported as skipped**, because nothing fires it (see below). A gate without `run` renders nothing and is reported unsatisfied |
 | `[sessions]`, `[[extensions]]` | No settled surface; reported as skipped |
 
 ### Authority
@@ -112,15 +112,26 @@ session, and that invisibility has already cost a merge its review
 So every `[[gates]]` entry that carries a `run` script renders into the
 `CLAUDE.md` region as standing prose:
 
-- the gate's `id`, `on` event, `description`, and `compose` mode (with a
-  one-line gloss of what the mode means against a project's own gates);
+- the gate's `id`, `on` event, and `description`;
 - the `run` script as a path resolved against the profile root — the
   manifest-relative form is useless to a reader outside the profile;
 - a standing directive: before performing the `on` action — or setting in
   motion work that ends in it, such as opening a PR or launching a
-  harness that opens PRs — run the script and surface its findings, and
+  harness that opens PRs — apply the gate and surface what it finds, and
   when a launched tool accepts a post-PR or review hook, pass the script
   there rather than running it by hand afterwards;
+- **what the gate's `compose` mode directs, spelled out per mode** rather
+  than glossed. Only `layer` means "run it unconditionally". A `defer`
+  gate runs only where the project has no gate of its own on the same
+  event; an `insist` gate runs, but a conflicting project convention
+  stops the session to surface it rather than yielding or overriding
+  (SPEC §2.2). One unconditional `Run` line for all three would direct a
+  session to run a deferred gate the project should have displaced, and
+  to run an insisted gate straight through the conflict it exists to
+  catch. A `compose` value the adapter does not know — the validator
+  rejects these, so it means the profile outran the adapter — renders as
+  unevaluable with an instruction not to run the script on the strength
+  of the section;
 - a plain statement that this is declared policy, not runtime
   enforcement — no hook in this harness fires a gate automatically.
 
