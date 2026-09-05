@@ -41,7 +41,8 @@ Non-clobbering consequences, all tested in `test_adapter.py`:
 | `[harnesses]` | Decides whether this adapter runs at all (`prefer` without `claude-code` → decline) |
 | `[[environment]]` | Resolved before rendering, never rendered; the report names what matched and why |
 | `[budget]` | `CLAUDE.md` prose: declared limits plus a standing launcher directive — **still reported as NOT ENFORCED** (see below) |
-| `[[gates]]`, `[sessions]`, `[[extensions]]` | No settled surface; reported as skipped |
+| `[[gates]]` | `CLAUDE.md` prose for gates carrying a `run` script: the declaration plus a standing directive conditioned on the gate's `compose` mode, with the path resolved against the profile root — **still reported as skipped**, because nothing fires it (see below). A gate without `run` renders nothing and is reported unsatisfied |
+| `[sessions]`, `[[extensions]]` | No settled surface; reported as skipped |
 
 ### Authority
 
@@ -122,13 +123,64 @@ renders into the `CLAUDE.md` region as prose, on the same surface the
 - a plain statement that this is declared policy, not runtime
   enforcement — nothing in this harness halts a call at the threshold.
 
+### Gates
+
+Same statement-vs-enforcement split as budget, one section over. Claude
+Code's user-level settings expose no hook surface that fires on a gate's
+`on` event (`merge`, `push`, and so on), so this adapter cannot make a
+gate *run* — but the session reading the rendered `CLAUDE.md` is very
+often what drives the workflow the gate binds to: it opens PRs, launches
+harnesses that open PRs (some of which expose exactly the hook surface
+this harness lacks), and prepares everything a human later merges. A gate
+that exists only in a render-time report is invisible to every such
+session, and that invisibility has already cost a merge its review
+(task 0002 records the incident).
+
+So every `[[gates]]` entry that carries a `run` script renders into the
+`CLAUDE.md` region as standing prose:
+
+- the gate's `id`, `on` event, and `description`;
+- the `run` script as a path resolved against the profile root — the
+  manifest-relative form is useless to a reader outside the profile;
+- a standing directive: before performing the `on` action — or setting in
+  motion work that ends in it, such as opening a PR or launching a
+  harness that opens PRs — apply the gate and surface what it finds, and
+  when a launched tool accepts a post-PR or review hook, pass the script
+  there rather than running it by hand afterwards;
+- **what the gate's `compose` mode directs, spelled out per mode** rather
+  than glossed. Only `layer` means "run it unconditionally". A `defer`
+  gate runs only where the project has no gate of its own on the same
+  event; an `insist` gate runs, but a conflicting project convention
+  stops the session to surface it rather than yielding or overriding
+  (SPEC §2.2). One unconditional `Run` line for all three would direct a
+  session to run a deferred gate the project should have displaced, and
+  to run an insisted gate straight through the conflict it exists to
+  catch. A `compose` value the adapter does not know — the validator
+  rejects these, so it means the profile outran the adapter — renders as
+  unevaluable with an instruction not to run the script on the strength
+  of the section;
+- a plain statement that this is declared policy, not runtime
+  enforcement — no hook in this harness fires a gate automatically.
+
+A gate with no `run` script renders nothing — there is nothing actionable
+to state — and stays in the report as unsatisfied. Every gate, rendered
+or not, stays in the report's skipped list: prose is a statement surface,
+not native enforcement.
+
+Unlike the budget section, gates render from the *resolved* config: an
+environment overrides gates only by replacing the whole array (SPEC
+§2.1), so there is no per-environment override idiom to render
+declaratively. An environment that does contribute to the gates array
+makes the render context-dependent, and the report flags it as such (see
+below).
+
 ### Environments and a global render
 
 `~/.claude` is global, but `path`/`git_org` selectors vary per project.
 That is fine while matched environments only override sections whose
 render does not depend on resolution. If a matched environment
 contributes to a resolution-dependent surface (instructions, authority,
-models), the report flags it as a context-dependent render so the
+models, gates), the report flags it as a context-dependent render so the
 resident knows project-specific values leaked into global config. The
 budget section is immune by construction: it renders from the raw
 manifest — base limits plus every *declared* environment override,

@@ -30,7 +30,11 @@ configuration and cannot stop a model call at runtime. Budget limits are
 therefore stated as standing prose in CLAUDE.md — the declared policy plus
 a directive to pass the applicable cap to tools that do enforce one (task
 0001, RFC 0003 C2) — and still reported as UNENFORCED, prominently, on
-every render.
+every render. Gates that carry a `run` script get the same treatment
+(task 0002): their declaration plus a standing directive to run the
+script before the gate's `on` action, still reported as not natively
+enforced, because no user-level Claude Code hook surface fires on a
+gate's lifecycle event.
 """
 
 from __future__ import annotations
@@ -116,6 +120,43 @@ ACTION_GLOSS: dict[str, str] = {
     "exec.install": "installing tools onto the machine",
 }
 
+# What a gate's `compose` mode actually directs the reading session to do
+# (SPEC §2.2: additive sections take layer/defer/insist, defaulting to
+# layer). These are directives, not glosses: only `layer` means "run it
+# unconditionally", so a single unconditional instruction would tell a
+# session to run a deferred gate the project's own convention should have
+# displaced, and to run an insisted gate straight through a conflict it is
+# supposed to stop at. `{script}` is the resolved path, `{on}` the event.
+COMPOSE_DIRECTIVE: dict[str, str] = {
+    "layer": (
+        "Run `{script}`. Compose `layer`: it runs in addition to any gate "
+        "the project itself requires, so a project gate on `{on}` does not "
+        "excuse skipping this one."
+    ),
+    "defer": (
+        "Compose `defer`: run `{script}` only where the project has no gate "
+        "of its own on `{on}`. Where the project does, its convention takes "
+        "this gate's place and this one is not run."
+    ),
+    "insist": (
+        "Compose `insist`: run `{script}`. If the project's own convention "
+        "on `{on}` conflicts with it, do not quietly yield to the project "
+        "and do not run over it — stop, surface the conflict, and wait."
+    ),
+}
+
+# A gate whose `compose` is none of the above. The validator rejects these,
+# so reaching this text means the profile outran the adapter (a mode from a
+# newer spec version, say). Rendering an unconditional `Run` for a mode
+# whose composition rule is unknown is the failure this table exists to
+# avoid, so the fallback states the mode is unevaluable and stops.
+COMPOSE_UNKNOWN = (
+    "Compose `{compose}` is not a mode this adapter can evaluate for a gate "
+    "(SPEC §2.2 allows `layer`, `defer`, and `insist` here). Do not run "
+    "`{script}` on the strength of this section — treat the gate as "
+    "unresolved and ask the resident."
+)
+
 # Which tier binds to settings.json's single `model` key. Claude Code's
 # global config carries exactly one default model, and the resident's
 # day-to-day default is the standard tier; cheap and deep have no global
@@ -154,7 +195,7 @@ class Report:
             for line in self.conflicts:
                 print(f"  {line}", file=out)
         if self.skipped:
-            print("Skipped — no Claude Code surface (SPEC §4 item 5):", file=out)
+            print("Skipped — no native Claude Code surface (SPEC §4 item 5):", file=out)
             for line in self.skipped:
                 print(f"  {line}", file=out)
         if self.unenforced:
@@ -331,10 +372,70 @@ def budget_section(raw: dict) -> str | None:
     return "\n".join(lines) + "\n"
 
 
+def gates_section(effective: dict, profile_dir: Path) -> str | None:
+    """The gates prose for the CLAUDE.md region: each declared gate that
+    carries a `run` script, stated as a standing directive to the reading
+    session in its role as the thing that drives the workflow — it opens
+    PRs, launches harnesses that open PRs, and prepares merges (task 0002).
+
+    Built from the RESOLVED config, unlike budget_section: gates have no
+    per-environment override idiom to render declaratively (an environment
+    replaces the whole array, SPEC §2.1), so the effective list is the
+    truthful one — and report_unrenderable flags the render as
+    context-dependent if an environment actually contributed to it.
+
+    A gate without `run` renders nothing: there is nothing actionable to
+    state, and it stays in the render report as unsatisfied.
+
+    Each gate's directive is conditioned on its `compose` mode — see
+    COMPOSE_DIRECTIVE. The adapter cannot detect whether a project has a
+    gate of its own (SPEC §2.2 leaves detection harness-specific and out of
+    scope for v0.3), so the prose states the condition and leaves the
+    reading session to evaluate it.
+    """
+    gates = [
+        g for g in effective.get("gates", []) or []
+        if isinstance(g, dict) and g.get("run")
+    ]
+    if not gates:
+        return None
+    lines = [
+        "# Gates (declared policy)\n",
+        "The profile declares standing gates on the resident's own work. Before",
+        "performing a gate's `on` action — or setting in motion work that ends",
+        "in it, such as opening a PR or launching a harness that opens PRs —",
+        "apply the gate as its `compose` mode below directs, and surface what it",
+        "finds. When launching a tool that accepts a post-PR or review hook, pass",
+        "the script there rather than running it by hand afterwards.\n",
+    ]
+    for gate in gates:
+        # `run` is profile-relative in the manifest (SPEC §3.7); the reader
+        # of ~/.claude/CLAUDE.md needs a path they can actually execute.
+        script = profile_dir / gate["run"]
+        desc = gate.get("description")
+        # SPEC §2.2 makes `layer` the default for additive sections.
+        compose = gate.get("compose", "layer")
+        template = COMPOSE_DIRECTIVE.get(compose, COMPOSE_UNKNOWN)
+        directive = template.format(
+            script=script, on=gate.get("on"), compose=compose
+        )
+        lines.append(
+            f"- `{gate.get('id')}` — on `{gate.get('on')}`"
+            + (f": {desc}." if desc else ".")
+            + f"\n  {directive}"
+        )
+    lines.append(
+        "\nThis is declared policy, not runtime enforcement: no hook in this\n"
+        "harness fires a gate automatically."
+    )
+    return "\n".join(lines) + "\n"
+
+
 def render_region(effective: dict, raw: dict, profile_dir: Path, report: Report) -> str:
     """The text between the markers: concatenated instructions, the
-    reporting half of any `reported` authority classes, then the declared
-    budget as launcher-directive prose."""
+    reporting half of any `reported` authority classes, the declared
+    budget as launcher-directive prose, then `run`-carrying gates as
+    standing prose."""
     parts: list[str] = []
     resident = effective.get("resident", {})
     name = resident.get("name") if isinstance(resident, dict) else None
@@ -374,6 +475,10 @@ def render_region(effective: dict, raw: dict, profile_dir: Path, report: Report)
         parts.append("\n".join(lines) + "\n")
 
     section = budget_section(raw)
+    if section is not None:
+        parts.append(section)
+
+    section = gates_section(effective, profile_dir)
     if section is not None:
         parts.append(section)
 
@@ -614,10 +719,13 @@ def report_unrenderable(effective: dict, explain: dict, report: Report) -> None:
             continue
         report.skipped.append(
             f"gates.{gate.get('id')} (on={gate.get('on')!r}, "
-            f"compose={gate.get('compose', 'layer')!r}) — Claude Code has no "
-            f"native {gate.get('on')} hook surface in user-level settings; the "
-            "gate's own `run` script remains the mechanism, invoked by whatever "
-            "drives the workflow"
+            f"compose={gate.get('compose', 'layer')!r}) — stated as standing "
+            "prose in the CLAUDE.md region (the declaration plus a directive, "
+            "conditioned on the compose mode, for its script and the gate's "
+            "`on` action), but still not "
+            "natively enforced on this harness: Claude Code has no "
+            f"user-level hook surface that fires on {gate.get('on')}, so the "
+            "session reading the prose, not the harness, carries the gate"
             if gate.get("run")
             else f"gates.{gate.get('id')} — no `run` and no native surface; unsatisfied"
         )
@@ -645,8 +753,10 @@ def report_unrenderable(effective: dict, explain: dict, report: Report) -> None:
     # project, so the resident should know context leaked into ~/.claude.
     # `budget` renders into CLAUDE.md too but is deliberately absent here:
     # its section is built from the raw manifest (see budget_section), so
-    # environment matching cannot leak into it.
-    rendered_prefixes = ("instructions", "authority", "models", "resident")
+    # environment matching cannot leak into it. `gates` IS here: its
+    # section renders from the resolved config (see gates_section), so an
+    # environment that replaces the gates array leaks into global prose.
+    rendered_prefixes = ("instructions", "authority", "models", "resident", "gates")
     contaminated = {
         env for path, env in explain.get("sources", {}).items()
         if path.startswith(rendered_prefixes)
