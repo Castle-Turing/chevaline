@@ -87,21 +87,29 @@ renders into the `CLAUDE.md` region as prose, on the same surface the
   re-render, like every other section);
 - one line per declared `[[environment]]` carrying a budget, labeled with
   when it applies — pulled from the raw manifest, not the resolved config,
-  so environment matching never changes the rendered bytes. Each line is
-  that environment's budget merged onto the **base alone**, and the
-  section states the composition rule rather than pre-composing:
-  environments compose in declaration order (SPEC §2.1), so where several
-  apply the cap in force is the last declared value of each field, not any
-  single line as written. Accumulating the overlays here instead would
-  render a cumulative prefix — correct only if every earlier environment
-  also matched — and would cost the context-independence the section is
-  built for. An environment whose budget merges to exactly the base still
-  renders: it is nil on its own but load-bearing under composition, where
-  it resets an earlier override;
+  so environment matching never changes the rendered bytes. Each line
+  states **only the fields that environment declares**, and the section
+  states the composition rule rather than pre-composing: environments
+  compose in declaration order (SPEC §2.1), so where several apply, the
+  values in force are the last declared value of each field, not any
+  single line as written.
+
+  Neither merging each line onto the base nor accumulating them works
+  here. Accumulating renders a cumulative prefix, correct only if every
+  earlier environment also matched, and costs the context-independence
+  the section is built for. Merging onto the base erases per-field
+  provenance: after an earlier environment raises the limit, an
+  environment declaring `on_exceed` alone composes to the raised limit
+  while one declaring `on_exceed` *and* the base limits composes to the
+  base — different caps, identical text under a base merge. Stating what
+  each environment declares, field by field, is what makes the
+  composition rule performable by the reader;
 - **when** each environment applies, including explicit activation on
   every line. `--environment NAME` bypasses `when` entirely (SPEC §3.2),
   so a line naming only the selector would tell a session that activated
-  the environment by name to use the base cap. A selector the resolver
+  the environment by name to use the base cap. Multiple predicates are
+  joined with "and", never a comma list: every predicate in a `when` block
+  must hold, and a comma reads as alternatives. A selector the resolver
   does not know renders as never matching automatically, since the
   resolver fails such an environment closed (SPEC §2.1) and prose reading
   like a live condition would be the one place in the pipeline treating it

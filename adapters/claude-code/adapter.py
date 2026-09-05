@@ -208,6 +208,11 @@ def describe_selector(when: Any) -> str:
     a usable predicate. The resolver fails such an environment closed
     (SPEC §2.1, `ch.KNOWN_SELECTORS`), so prose that reads like an ordinary
     condition would be the one place in the pipeline treating it as live.
+
+    Predicates are joined with "and", never a bare comma: every predicate in
+    a `when` block must hold (SPEC §3.2, `ch.evaluate_when`), and a comma
+    list reads as alternatives. Explicit activation is the one genuine
+    alternative, so it is the outer "or".
     """
     if not isinstance(when, dict) or not when:
         return "applies only when explicitly activated by name"
@@ -231,11 +236,12 @@ def describe_selector(when: Any) -> str:
         names = ", ".join(f"`{k}`" for k in unsupported)
         verb = "is a selector" if len(unsupported) == 1 else "are selectors"
         return (
-            f"never matches automatically — {names} {verb} this adapter does "
-            "not support, and an unknown selector fails closed (SPEC §2.1); "
+            f"never matches automatically ({names} {verb} this adapter does "
+            "not support, and an unknown selector fails closed, SPEC §2.1); "
             "applies only when explicitly activated by name"
         )
-    return ", ".join(phrases) + ", or when explicitly activated by name"
+    conjoined = " and ".join(phrases)
+    return f"{conjoined}; or when explicitly activated by name"
 
 
 def budget_section(raw: dict) -> str | None:
@@ -271,31 +277,43 @@ def budget_section(raw: dict) -> str | None:
     for env in raw.get("environment", []) or []:
         if not isinstance(env, dict) or not isinstance(env.get("budget"), dict):
             continue
-        # SPEC §2.1 merge, applied to [budget] alone: on_exceed (scalar) and
-        # limits (array) both replace wholesale, so a shallow merge is exact.
-        # Merged against the BASE only — each line is one environment's
-        # declaration, not a running total. Environments that both apply
-        # compose in declaration order, which the section header states and
-        # the reading session performs; accumulating here instead would
-        # render a cumulative prefix that is only correct when every earlier
-        # environment also matched.
-        merged = {**budget, **env["budget"]}
-        limits_txt = "; ".join(describe_limit(e) for e in merged.get("limits", []) or [])
-        merged_on_exceed = merged.get("on_exceed")
-        if merged_on_exceed != on_exceed and merged_on_exceed is not None:
-            limits_txt += f' — `on_exceed = "{merged_on_exceed}"`'
+        # Each line states what this environment DECLARES, field by field —
+        # not its budget merged onto the base, and not a running total.
+        # Merging onto the base would erase the difference between a field
+        # this environment inherits and one it explicitly resets to the base
+        # value: after an earlier environment raises the limit, `on_exceed`
+        # alone and `on_exceed` + base limits compose to different caps
+        # (SPEC §2.1) but merge to identical text. Provenance per field is
+        # what makes the header's composition rule performable by a reader.
+        declared = env["budget"]
+        stated = []
+        if "limits" in declared:
+            stated.append(
+                "sets limits to "
+                + "; ".join(describe_limit(e) for e in declared.get("limits") or [])
+            )
+        if "on_exceed" in declared:
+            stated.append(f'sets `on_exceed = "{declared["on_exceed"]}"`')
+        if not stated:
+            continue
+        if len(stated) == 1:
+            stated.append(
+                "leaves the other field as the base or an earlier environment "
+                "left it"
+            )
         overrides.append(
             f"- environment `{env.get('name')}` — "
-            f"{describe_selector(env.get('when'))}: {limits_txt}"
+            f"{describe_selector(env.get('when'))}: {'; '.join(stated)}"
         )
     if overrides:
         lines.append(
-            "\nDeclared environment overrides. Each line is one environment's\n"
-            "budget merged onto the base above, on its own. Where more than one\n"
-            "applies at once they compose in the declaration order below, later\n"
-            "winning over earlier (SPEC §2.1), so the cap in force is the last\n"
-            "declared value of each field among those that apply — not\n"
-            "necessarily any single line as written:\n"
+            "\nDeclared environment overrides. Each line states only the fields\n"
+            "that environment actually declares — what it does not name, it\n"
+            "leaves alone. Where more than one applies at once they compose in\n"
+            "the declaration order below, later winning over earlier (SPEC\n"
+            "§2.1), so the values in force are the last declared value of each\n"
+            "field among those that apply — not necessarily any single line as\n"
+            "written:\n"
         )
         lines.extend(overrides)
 

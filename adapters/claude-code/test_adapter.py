@@ -237,8 +237,8 @@ class TestBudgetProse(AdapterCase):
         rc, _ = self.render()
         self.assertEqual(rc, 0)
         md = (self.claude / "CLAUDE.md").read_text()
-        self.assertIn("compose in the declaration order below", md)
-        self.assertIn("later\nwinning over earlier", md)
+        self.assertIn("compose in\nthe declaration order below", md)
+        self.assertIn("later winning over earlier", md)
         self.assertNotIn("in force instead of the base limits", md)
 
     def test_budgetless_profile_is_refused_not_rerendered(self):
@@ -279,7 +279,13 @@ class TestBudgetOverrideLabels(unittest.TestCase):
         # --environment bypasses `when` entirely (SPEC §3.2), so a line that
         # names only the selector understates when the override applies.
         section = self.section(self.env("work", {"git_org": "Castle-Turing"}))
-        self.assertIn("in git org `Castle-Turing`, or when explicitly activated by name", section)
+        self.assertIn("in git org `Castle-Turing`; or when explicitly activated by name", section)
+
+    def test_multiple_predicates_are_conjoined_not_listed_as_alternatives(self):
+        # Every predicate in a `when` block must hold (SPEC §3.2), so a comma
+        # list would invite a session to apply the override on one match.
+        section = self.section(self.env("prod", {"path": "/work/**", "hostname": "prod"}))
+        self.assertIn("under `/work/**` and on host `prod`; or when explicitly", section)
 
     def test_whenless_environment_says_activation_only(self):
         section = self.section(self.env("manual", None))
@@ -303,16 +309,38 @@ class TestBudgetOverrideLabels(unittest.TestCase):
         self.assertIn("environment `reset`", section)
         self.assertLess(section.index("environment `raise`"), section.index("environment `reset`"))
 
-    def test_each_line_is_merged_against_the_base_not_accumulated(self):
-        # `later` changes only on_exceed. Merged against the base it keeps
-        # the base's 10 USD; accumulating would show it carrying 25.
+    def test_a_line_states_only_the_fields_that_environment_declares(self):
+        # `later` declares on_exceed alone, so it must not appear to carry a
+        # limit — neither the base's (merging) nor an earlier one's
+        # (accumulating). Whatever it does not name, it leaves alone.
         section = self.section(
             self.env("earlier", {"path": "/a*"}, amount=25),
             {"name": "later", "when": {"path": "/b*"}, "budget": {"on_exceed": "warn"}},
         )
         later_line = [l for l in section.splitlines() if "`later`" in l][0]
-        self.assertIn("10 USD per session", later_line)
-        self.assertIn('`on_exceed = "warn"`', later_line)
+        self.assertIn('sets `on_exceed = "warn"`', later_line)
+        self.assertIn("leaves the other field", later_line)
+        self.assertNotIn("USD", later_line)
+
+    def test_an_inherited_field_reads_differently_from_an_explicit_reset(self):
+        # After an earlier environment raises the limit, on_exceed alone
+        # composes to 25/warn while on_exceed plus the base limits composes
+        # to 10/warn (SPEC §2.1). Rendering both as the base merge made them
+        # identical text, so the reader could not perform the composition the
+        # header asks for.
+        inherits = self.section(
+            self.env("earlier", {"path": "/a*"}, amount=25),
+            {"name": "later", "when": {"path": "/b*"}, "budget": {"on_exceed": "warn"}},
+        )
+        resets = self.section(
+            self.env("earlier", {"path": "/a*"}, amount=25),
+            self.env("later", {"path": "/b*"}, amount=10, on_exceed="warn"),
+        )
+        self.assertNotEqual(
+            [l for l in inherits.splitlines() if "`later`" in l][0],
+            [l for l in resets.splitlines() if "`later`" in l][0],
+        )
+        self.assertIn("sets limits to 10 USD per session", resets)
 
 
 class TestIdempotence(AdapterCase):
