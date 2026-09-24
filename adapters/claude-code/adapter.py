@@ -914,6 +914,13 @@ def render_plugins(
         if args.plugin_store
         else plugstore.default_store()
     )
+    # Marketplaces this render has already registered (or verified as
+    # ours), keyed by name → (checkout, pin). One marketplace may list
+    # several of the profile's plugins; the later declarations reuse the
+    # first registration's checkout instead of re-adding the same name —
+    # which the CLI would refuse as already existing — and a same-name
+    # marketplace at a DIFFERENT pin is a genuine conflict.
+    session_registered: dict[str, tuple[str, str]] = {}
 
     for entry in plugins:
         pid, pin = entry["id"], entry["pin"]
@@ -1051,7 +1058,26 @@ def render_plugins(
             and prior.get("pin") == pin
             and prior.get("checkout") == str(checkout)
         )
-        if up_to_date:
+        session_hit = session_registered.get(mkt_name)
+        if session_hit is not None and session_hit[1] != pin:
+            errors.append(
+                f"plugins.{pid}: marketplace '{mkt_name}' was registered earlier "
+                f"in this render at pin {session_hit[1][:12]}, but this entry "
+                f"declares pin {pin[:12]} — one marketplace name cannot point at "
+                "two pins; refusing"
+            )
+            continue
+        if session_hit is not None:
+            # Same marketplace, same pin, registered earlier this render:
+            # reuse that registration's checkout for this plugin's record
+            # and enablement rather than re-adding the name.
+            checkout = Path(session_hit[0])
+            report.notes.append(
+                f"plugins.{pid}: marketplace '{mkt_name}' already registered "
+                "this render; reusing it"
+            )
+        elif up_to_date:
+            session_registered[mkt_name] = (str(checkout), pin)
             report.notes.append(f"plugins.{pid}: already registered at this pin; no CLI call")
         elif args.dry_run:
             report.notes.append(
@@ -1112,6 +1138,7 @@ def render_plugins(
                         )
                     )
                     continue
+            session_registered[mkt_name] = (str(checkout), pin)
             report.rendered.append(
                 f"plugins.{pid}: registered local marketplace '{mkt_name}' → {checkout}"
             )
@@ -1295,6 +1322,28 @@ def cmd_render(args: argparse.Namespace) -> int:
     existing_md = md_path.read_text() if md_path.is_file() else None
     check_marker_integrity(existing_md)
 
+    # Instruction inputs preflight for the same reason: render_region reads
+    # them after the plugins phase, and a missing `path` key, a directory,
+    # or an unreadable file would otherwise abort the render with a
+    # marketplace registration already made and no sidecar record of it.
+    for i, entry in enumerate(applicable_instructions(effective)):
+        rel = entry.get("path")
+        target = profile_dir / rel if isinstance(rel, str) else None
+        try:
+            readable = target is not None and target.is_file()
+            if readable:
+                target.read_text()
+        except OSError:
+            readable = False
+        if not readable:
+            print(
+                f"ERROR: instructions[{i}].path {rel!r} is missing, not a file, "
+                "or unreadable; nothing rendered (checked before any plugin "
+                "side effect).",
+                file=sys.stderr,
+            )
+            return 1
+
     plugin_identities, plugin_records, plugin_errors = render_plugins(
         effective, args, profile_dir, claude_dir, sidecar, report
     )
@@ -1308,9 +1357,14 @@ def cmd_render(args: argparse.Namespace) -> int:
     # from the PROJECTED enablement — a registered checkout whose
     # enablement apply_enabled_plugins will decline (hand-written false or
     # a non-object table) must not be presented as loaded.
-    projected = apply_enabled_plugins(
-        copy.deepcopy(settings), sidecar, plugin_identities, Report()
+    projected = set(
+        apply_enabled_plugins(copy.deepcopy(settings), sidecar, plugin_identities, Report())
     )
+    hand_table = settings.get("enabledPlugins")
+    if isinstance(hand_table, dict):
+        # A hand-enabled identity is loaded even though it is not ours to
+        # own; the prose describes what loads, not what is owned.
+        projected |= {i for i in plugin_identities if hand_table.get(i) is True}
     prose_records = {
         pid: rec for pid, rec in plugin_records.items()
         if rec.get("identity") in projected

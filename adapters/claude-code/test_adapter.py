@@ -931,6 +931,67 @@ class TestPluginRender(PluginCase):
         self.assertNotIn("removed (no longer in profile)", out)
         self.assertIn("post-fetch state unknown", out)
 
+    def test_hand_enabled_plugin_counts_as_delivered_in_prose(self):
+        write(self.claude / "settings.json", json.dumps({"enabledPlugins": {"pony@pony": True}}))
+        self.write_profile(install_level="silent")
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        md = (self.claude / "CLAUDE.md").read_text()
+        self.assertIn("pinned checkout: `", md)
+        self.assertNotIn("Declared but not installed", md)
+        self.assertNotIn("pony@pony", self.sidecar()["owned"].get("enabledPlugins", []))
+
+    def test_broken_instruction_input_aborts_before_plugin_side_effects(self):
+        (self.profile / "instructions").mkdir(parents=True, exist_ok=True)
+        (self.profile / "instructions" / "dir.md").mkdir()
+        self.write_profile(install_level="silent")
+        toml = (self.profile / "chevaline.toml").read_text()
+        write(
+            self.profile / "chevaline.toml",
+            toml + '\n[[instructions]]\npath = "instructions/dir.md"\n',
+        )
+        rc, _ = self.render()
+        self.assertEqual(rc, 1)
+        self.assertFalse(self.store.exists())
+        self.assertEqual(self.cli_calls(), [])
+
+    def test_two_plugins_from_one_marketplace_share_a_registration(self):
+        write(
+            self.plugin_repo / ".claude-plugin" / "marketplace.json",
+            json.dumps(
+                {
+                    "name": "pony",
+                    "plugins": [
+                        {"name": "pony", "source": "./"},
+                        {"name": "tail", "source": "./"},
+                    ],
+                }
+            ),
+        )
+        _git("add", "-A", cwd=self.plugin_repo)
+        _git("commit", "--quiet", "-m", "two plugins", cwd=self.plugin_repo)
+        self.pin = _git("rev-parse", "HEAD", cwd=self.plugin_repo)
+        self.write_profile(
+            install_level="silent",
+            plugins=(
+                "[[plugins]]\n"
+                'id = "pony"\n'
+                f'source = "{self.plugin_repo}"\n'
+                f'pin = "{self.pin}"\n'
+                "\n[[plugins]]\n"
+                'id = "tail"\n'
+                f'source = "{self.plugin_repo}"\n'
+                f'pin = "{self.pin}"\n'
+            ),
+        )
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        adds = [c for c in self.cli_calls() if c.startswith("plugin marketplace add")]
+        self.assertEqual(len(adds), 1, self.cli_calls())
+        enabled = self.settings()["enabledPlugins"]
+        self.assertIs(enabled["pony@pony"], True)
+        self.assertIs(enabled["tail@pony"], True)
+
     def test_dotted_marketplace_identity_is_enabled_literally(self):
         write(
             self.plugin_repo / ".claude-plugin" / "marketplace.json",
