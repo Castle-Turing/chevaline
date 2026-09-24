@@ -101,6 +101,12 @@ ARRAY_OF_TABLES_KEYS = {"instructions", "gates", "extensions", "plugins"}
 # plugin executes code inside every session.
 PLUGIN_PIN = re.compile(r"^[0-9a-f]{40}$")
 
+# A plugin `id` is a single path component: it names the checkout's
+# directory inside the plugin store, so separators, dot components, and
+# anything absolute would let a profile escape the store. Must start with
+# an alphanumeric, which also rules out "." and "..".
+PLUGIN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
 
 # --------------------------------------------------------------------------
 # Small helpers
@@ -333,6 +339,13 @@ def validate_plugins_array(group: dict, ctx_prefix: str, errors: list[str]) -> N
         plugin_id = entry.get("id")
         if not isinstance(plugin_id, str) or not plugin_id:
             errors.append(f"{ctx} is missing required field 'id' (SPEC §3.11)")
+        elif not PLUGIN_ID.match(plugin_id):
+            errors.append(
+                f"{ctx}.id {plugin_id!r} must be a single path component "
+                "(alphanumeric start; letters, digits, '.', '_', '-') — it names "
+                "the checkout's directory inside the plugin store, and a "
+                "separator or dot component would escape it"
+            )
         elif plugin_id in seen_ids:
             errors.append(f"{ctx}: duplicate plugin id '{plugin_id}' — ids must be unique")
         else:

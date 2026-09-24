@@ -73,6 +73,43 @@ class TestMaterialize(PlugstoreCase):
             plugstore.materialize("p", str(self.repo), bogus, self.store)
         self.assertFalse((self.store / "p" / bogus).exists())
 
+    def test_git_launch_failure_is_a_plugstore_error(self):
+        import subprocess as sp
+
+        real_run = sp.run
+
+        def broken_run(argv, **kwargs):
+            if argv and argv[0] == "git" and "clone" in argv:
+                raise OSError("git not found")
+            return real_run(argv, **kwargs)
+
+        sp.run = broken_run
+        try:
+            with self.assertRaises(plugstore.PlugstoreError):
+                plugstore.materialize("p", str(self.repo), self.sha, self.store)
+        finally:
+            sp.run = real_run
+
+    def test_escaping_plugin_id_is_refused(self):
+        with self.assertRaises(plugstore.PlugstoreError):
+            plugstore.materialize("../evil", str(self.repo), self.sha, self.store)
+
+    def test_resolve_source_is_profile_relative(self):
+        profile = self.root / "profile"
+        self.assertEqual(
+            plugstore.resolve_source("plugins/local", profile),
+            str(profile / "plugins/local"),
+        )
+        self.assertEqual(plugstore.resolve_source("/abs/path", profile), "/abs/path")
+        self.assertEqual(
+            plugstore.resolve_source("https://example.invalid/r", profile),
+            "https://example.invalid/r",
+        )
+        self.assertEqual(
+            plugstore.resolve_source("git@example.invalid:o/r.git", profile),
+            "git@example.invalid:o/r.git",
+        )
+
     def test_tampered_store_entry_is_refused(self):
         dest, _ = plugstore.materialize("p", str(self.repo), self.sha, self.store)
         (dest / "extra.txt").write_text("tamper\n")

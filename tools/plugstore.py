@@ -24,6 +24,19 @@ class PlugstoreError(RuntimeError):
     """A materialization failure. The message is resident-facing."""
 
 
+def resolve_source(source: str, profile_dir: Path) -> str:
+    """A `source` may be a git URL or a path; a relative path is
+    profile-relative (SPEC §3.11), never relative to wherever the adapter
+    process happens to be running. URLs and scp-style remotes pass through
+    untouched."""
+    if "://" in source or source.startswith("git@"):
+        return source
+    path = Path(source).expanduser()
+    if not path.is_absolute():
+        path = profile_dir / path
+    return str(path)
+
+
 def default_store() -> Path:
     xdg = os.environ.get("XDG_DATA_HOME")
     base = Path(xdg) if xdg else Path.home() / ".local" / "share"
@@ -61,6 +74,13 @@ def materialize(
     verifies.
     """
     store = store if store is not None else default_store()
+    # Belt and braces under the validator's PLUGIN_ID rule: an id must stay
+    # a single path component, or dest escapes the store.
+    if Path(plugin_id).name != plugin_id or plugin_id in (".", "..", ""):
+        raise PlugstoreError(
+            f"plugin id {plugin_id!r} is not a single path component — refusing "
+            "a store path outside the plugin store"
+        )
     dest = checkout_dir(store, plugin_id, pin)
 
     if dest.exists():
@@ -78,21 +98,29 @@ def materialize(
         shutil.rmtree(scratch)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
-    clone = subprocess.run(
-        ["git", "clone", "--quiet", source, str(scratch)],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        clone = subprocess.run(
+            ["git", "clone", "--quiet", source, str(scratch)],
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        shutil.rmtree(scratch, ignore_errors=True)
+        raise PlugstoreError(f"could not run git to clone {source!r}: {e}") from e
     if clone.returncode != 0:
         shutil.rmtree(scratch, ignore_errors=True)
         raise PlugstoreError(
             f"git clone of {source!r} failed: {clone.stderr.strip() or clone.stdout.strip()}"
         )
-    pinned = subprocess.run(
-        ["git", "-C", str(scratch), "checkout", "--quiet", "--detach", pin],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        pinned = subprocess.run(
+            ["git", "-C", str(scratch), "checkout", "--quiet", "--detach", pin],
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        shutil.rmtree(scratch, ignore_errors=True)
+        raise PlugstoreError(f"could not run git to pin {source!r}: {e}") from e
     if pinned.returncode != 0:
         shutil.rmtree(scratch, ignore_errors=True)
         raise PlugstoreError(

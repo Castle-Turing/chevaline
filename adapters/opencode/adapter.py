@@ -187,7 +187,7 @@ def install_authority(effective: dict) -> str:
 
 
 def desired_plugin_entries(
-    effective: dict, args: argparse.Namespace, report: Report
+    effective: dict, args: argparse.Namespace, profile_dir: Path, report: Report
 ) -> list[str]:
     """The absolute .mjs paths the config's `plugin` array should carry.
     Materializes checkouts (authority-gated) except under --dry-run."""
@@ -204,7 +204,8 @@ def desired_plugin_entries(
     store = Path(args.plugin_store).expanduser() if args.plugin_store else plugstore.default_store()
 
     for entry in plugins:
-        pid, source, pin = entry["id"], entry["source"], entry["pin"]
+        pid, pin = entry["id"], entry["pin"]
+        source = plugstore.resolve_source(entry["source"], profile_dir)
         checkout = plugstore.checkout_dir(store, pid, pin)
         materialized = checkout.exists()
 
@@ -236,17 +237,23 @@ def desired_plugin_entries(
                 }[level]
                 report.rendered.append(f"plugins.{pid}: {verb} {source} @ {pin[:12]} → {checkout}")
 
+        # OpenCode plugins are JavaScript or TypeScript entry points; .cjs
+        # helpers are deliberately excluded (they are modules the entry
+        # points require, not plugins of their own).
         plugin_dir = checkout / ".opencode" / "plugins"
-        mjs = sorted(plugin_dir.glob("*.mjs")) if plugin_dir.is_dir() else []
-        if not mjs:
+        points: list[Path] = []
+        if plugin_dir.is_dir():
+            for pattern in ("*.mjs", "*.js", "*.ts"):
+                points.extend(plugin_dir.glob(pattern))
+        if not points:
             report.skipped.append(
-                f"plugins.{pid} — the checkout has no .opencode/plugins/*.mjs entry "
-                "point, so there is no OpenCode packaging to reference; the entry "
-                f"lists {HARNESS_NAME} (or lists no harnesses), which looks like a "
-                "mismatch with what the plugin repo actually ships (SPEC §4.2)"
+                f"plugins.{pid} — the checkout has no .opencode/plugins/*.mjs|js|ts "
+                "entry point, so there is no OpenCode packaging to reference; the "
+                f"entry lists {HARNESS_NAME} (or lists no harnesses), which looks "
+                "like a mismatch with what the plugin repo actually ships (SPEC §4.2)"
             )
             continue
-        for path in mjs:
+        for path in sorted(points):
             entries.append(str(path))
     return entries
 
@@ -405,7 +412,7 @@ def cmd_render(args: argparse.Namespace) -> int:
         config = {}
     sidecar = json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
 
-    wanted = desired_plugin_entries(effective, args, report)
+    wanted = desired_plugin_entries(effective, args, profile_dir, report)
     new_config, new_sidecar = apply_config(config, sidecar, wanted, report)
 
     report_unrenderable(effective, report)

@@ -790,6 +790,16 @@ class TestPluginsValidation(unittest.TestCase):
         )
         self.assertTrue(any("not valid for this preference's shape" in e for e in errors), errors)
 
+    def test_path_escaping_ids_are_rejected(self):
+        for bad in ("../outside", "/tmp/abs", "a/b", ".", ".."):
+            errors = self.errors_for(
+                f'id = "{bad}"\nsource = "s"\npin = "{self.GOOD_PIN}"'
+            )
+            self.assertTrue(
+                any("single path component" in e for e in errors),
+                f"id {bad!r} was not rejected: {errors}",
+            )
+
     def test_harnesses_must_be_a_string_array(self):
         errors = self.errors_for(
             f'id = "p"\nsource = "s"\npin = "{self.GOOD_PIN}"\nharnesses = "claude-code"'

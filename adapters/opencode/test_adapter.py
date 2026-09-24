@@ -194,6 +194,23 @@ class TestPlugins(OpencodeCase):
         rc, _ = self.render()
         self.assertEqual(rc, 1)
 
+    def test_js_and_ts_entry_points_are_recognized(self):
+        (self.plugin_repo / ".opencode" / "plugins" / "pony.mjs").unlink()
+        write(self.plugin_repo / ".opencode" / "plugins" / "pony.js", "// entry\n")
+        write(self.plugin_repo / ".opencode" / "plugins" / "extra.ts", "// entry\n")
+        write(self.plugin_repo / ".opencode" / "plugins" / "helper.cjs", "// helper\n")
+        _git("add", "-A", cwd=self.plugin_repo)
+        _git("commit", "--quiet", "-m", "js entry", cwd=self.plugin_repo)
+        self.pin = _git("rev-parse", "HEAD", cwd=self.plugin_repo)
+        self.write_profile()
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        base = self.store / "pony" / self.pin / ".opencode" / "plugins"
+        self.assertEqual(
+            self.config()["plugin"],
+            [str(base / "extra.ts"), str(base / "pony.js")],
+        )
+
     def test_no_opencode_packaging_is_reported(self):
         (self.plugin_repo / ".opencode" / "plugins" / "pony.mjs").unlink()
         _git("add", "-A", cwd=self.plugin_repo)

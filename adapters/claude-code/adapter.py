@@ -790,6 +790,7 @@ def run_claude_cli(cli: str, claude_dir: Path, cli_args: list[str]) -> subproces
 def render_plugins(
     effective: dict,
     args: argparse.Namespace,
+    profile_dir: Path,
     claude_dir: Path,
     old_sidecar: dict,
     report: Report,
@@ -815,7 +816,8 @@ def render_plugins(
     store = Path(args.plugin_store).expanduser() if args.plugin_store else plugstore.default_store()
 
     for entry in plugins:
-        pid, source, pin = entry["id"], entry["source"], entry["pin"]
+        pid, pin = entry["id"], entry["pin"]
+        source = plugstore.resolve_source(entry["source"], profile_dir)
         checkout = plugstore.checkout_dir(store, pid, pin)
         materialized = checkout.exists()
 
@@ -828,30 +830,32 @@ def render_plugins(
             )
             continue
 
-        if args.dry_run:
-            report.notes.append(
-                f"plugins.{pid}: DRY RUN — would "
-                + ("use the existing checkout at " if materialized else "materialize into ")
-                + str(checkout)
-                + ", register it as a local marketplace via `claude plugin "
-                "marketplace add`, and enable it via the owned "
-                "`enabledPlugins` settings key"
-            )
-            continue
+        if not materialized:
+            if args.dry_run:
+                report.notes.append(
+                    f"plugins.{pid}: DRY RUN — would materialize into {checkout}, "
+                    "register it as a local marketplace via `claude plugin "
+                    "marketplace add`, and enable it via the owned "
+                    "`enabledPlugins` settings key"
+                )
+                continue
+            try:
+                checkout, fetched = plugstore.materialize(pid, source, pin, store)
+            except plugstore.PlugstoreError as e:
+                errors.append(f"plugins.{pid}: {e}")
+                continue
+            if fetched:
+                verb = {
+                    "silent": "materialized",
+                    "reported": "materialized (exec.install is 'reported': saying so)",
+                    "approval": "materialized (exec.install is 'approval'; authorized by --allow-install)",
+                }[level]
+                report.rendered.append(f"plugins.{pid}: {verb} {source} @ {pin[:12]} → {checkout}")
 
-        try:
-            checkout, fetched = plugstore.materialize(pid, source, pin, store)
-        except plugstore.PlugstoreError as e:
-            errors.append(f"plugins.{pid}: {e}")
-            continue
-        if fetched:
-            verb = {
-                "silent": "materialized",
-                "reported": "materialized (exec.install is 'reported': saying so)",
-                "approval": "materialized (exec.install is 'approval'; authorized by --allow-install)",
-            }[level]
-            report.rendered.append(f"plugins.{pid}: {verb} {source} @ {pin[:12]} → {checkout}")
-
+        # From here the checkout exists, so the desired state is computable
+        # in a dry run too — only the CLI actions stay behind the dry-run
+        # guard. A dry run that dropped the desired records here would then
+        # report removals a real render would never perform.
         mkt_path = checkout / ".claude-plugin" / "marketplace.json"
         if not mkt_path.is_file():
             report.skipped.append(
@@ -865,6 +869,12 @@ def render_plugins(
             mkt = json.loads(mkt_path.read_text())
         except (OSError, json.JSONDecodeError) as e:
             errors.append(f"plugins.{pid}: unreadable marketplace.json ({e})")
+            continue
+        if not isinstance(mkt, dict) or not isinstance(mkt.get("plugins", []), list):
+            errors.append(
+                f"plugins.{pid}: marketplace.json is valid JSON but not marketplace-"
+                "shaped (object with a `plugins` array); refusing to guess"
+            )
             continue
         mkt_name = mkt.get("name")
         listed = any(
@@ -887,21 +897,29 @@ def render_plugins(
             continue
 
         prior = old_records.get(pid)
-        if prior and prior.get("marketplace") == mkt_name and prior.get("pin") == pin:
+        up_to_date = bool(
+            prior and prior.get("marketplace") == mkt_name and prior.get("pin") == pin
+        )
+        if up_to_date:
             report.notes.append(f"plugins.{pid}: already registered at this pin; no CLI call")
+        elif args.dry_run:
+            report.notes.append(
+                f"plugins.{pid}: DRY RUN — would register local marketplace "
+                f"'{mkt_name}' → {checkout} and enable '{identity}'"
+            )
         else:
-            if prior and prior.get("marketplace") and prior.get("pin") != pin:
-                removal = run_claude_cli(
-                    args.claude_cli, claude_dir,
-                    ["plugin", "marketplace", "remove", prior["marketplace"]],
-                )
-                if removal.returncode != 0:
-                    report.notes.append(
-                        f"plugins.{pid}: could not remove the old marketplace "
-                        f"registration before re-pinning ({(removal.stderr or removal.stdout).strip()}); "
-                        "continuing with the add"
-                    )
             try:
+                if prior and prior.get("marketplace") and prior.get("pin") != pin:
+                    removal = run_claude_cli(
+                        args.claude_cli, claude_dir,
+                        ["plugin", "marketplace", "remove", prior["marketplace"]],
+                    )
+                    if removal.returncode != 0:
+                        report.notes.append(
+                            f"plugins.{pid}: could not remove the old marketplace "
+                            f"registration before re-pinning ({(removal.stderr or removal.stdout).strip()}); "
+                            "continuing with the add"
+                        )
                 added = run_claude_cli(
                     args.claude_cli, claude_dir,
                     ["plugin", "marketplace", "add", str(checkout)],
@@ -914,12 +932,32 @@ def render_plugins(
                 )
                 continue
             output = ((added.stderr or "") + (added.stdout or "")).lower()
-            if added.returncode != 0 and "already" not in output:
-                errors.append(
-                    f"plugins.{pid}: `claude plugin marketplace add {checkout}` failed: "
-                    f"{(added.stderr or added.stdout).strip()}"
+            if added.returncode != 0:
+                # "Already exists" is only success if the existing
+                # registration is the one this adapter recorded for this
+                # exact checkout. A same-named marketplace the resident
+                # registered by hand — or a stale one left by a failed
+                # re-pin removal — must surface as a conflict, not be
+                # silently adopted (and later removed) as ours.
+                ours_already = (
+                    "already" in output
+                    and prior is not None
+                    and prior.get("marketplace") == mkt_name
+                    and prior.get("checkout") == str(checkout)
                 )
-                continue
+                if not ours_already:
+                    errors.append(
+                        f"plugins.{pid}: `claude plugin marketplace add {checkout}` "
+                        f"failed: {(added.stderr or added.stdout).strip()}"
+                        + (
+                            " — a marketplace with this name already exists and is "
+                            "not one this adapter registered for this checkout; "
+                            "resolve the collision by hand (/plugin) and re-render"
+                            if "already" in output
+                            else ""
+                        )
+                    )
+                    continue
             report.rendered.append(
                 f"plugins.{pid}: registered local marketplace '{mkt_name}' → {checkout}"
             )
@@ -1108,7 +1146,7 @@ def cmd_render(args: argparse.Namespace) -> int:
     # invoke owns state of its own, and reading settings only after every
     # external command has run means nothing here writes from a stale view.
     plugin_scalars, plugin_records, plugin_errors = render_plugins(
-        effective, args, claude_dir, sidecar, report
+        effective, args, profile_dir, claude_dir, sidecar, report
     )
 
     try:

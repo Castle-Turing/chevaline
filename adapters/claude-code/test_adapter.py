@@ -789,6 +789,62 @@ class TestPluginRender(PluginCase):
         self.assertEqual(self.cli_calls(), [])
         self.assertNotIn("enabledPlugins", self.settings())
 
+    def test_dry_run_after_render_plans_no_removal(self):
+        self.write_profile(install_level="silent")
+        self.render()
+        rc, out = self.render("--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("would remove", out)
+        self.assertNotIn("removed (no longer in profile)", out)
+        self.assertNotIn("enabledPlugins.pony@pony: removed", out)
+
+    def test_foreign_already_registered_marketplace_is_a_conflict(self):
+        # The stub CLI refuses the add claiming the name already exists;
+        # with no sidecar record saying it is ours, that is a conflict.
+        self.cli.write_text(
+            "#!/bin/sh\n"
+            f'echo "$@" >> "{self.cli_log}"\n'
+            'echo "marketplace already exists" >&2\n'
+            "exit 1\n"
+        )
+        self.write_profile(install_level="silent")
+        rc, out = self.render()
+        self.assertEqual(rc, 1)
+        self.assertIn("not one this adapter registered", out)
+        self.assertNotIn("enabledPlugins", self.settings())
+
+    def test_unshaped_marketplace_json_is_an_error_not_a_crash(self):
+        write(self.plugin_repo / ".claude-plugin" / "marketplace.json", "[1, 2]")
+        _git("add", "-A", cwd=self.plugin_repo)
+        _git("commit", "--quiet", "-m", "bad shape", cwd=self.plugin_repo)
+        self.pin = _git("rev-parse", "HEAD", cwd=self.plugin_repo)
+        self.write_profile(install_level="silent")
+        rc, out = self.render()
+        self.assertEqual(rc, 1)
+        self.assertIn("not marketplace-", out)
+
+    def test_relative_source_resolves_against_profile_dir(self):
+        # A profile-relative source must not depend on the process cwd.
+        rel_repo = self.profile / "plugins" / "pony"
+        rel_repo.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "clone", "--quiet", str(self.plugin_repo), str(rel_repo)],
+            check=True,
+            capture_output=True,
+        )
+        self.write_profile(
+            install_level="silent",
+            plugins=(
+                "[[plugins]]\n"
+                'id = "pony"\n'
+                'source = "plugins/pony"\n'
+                f'pin = "{self.pin}"\n'
+            ),
+        )
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        self.assertTrue((self.store / "pony" / self.pin).is_dir())
+
     def test_dry_run_touches_nothing(self):
         self.write_profile(install_level="silent")
         rc, out = self.render("--dry-run")
