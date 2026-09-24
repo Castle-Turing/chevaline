@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -28,9 +29,10 @@ class PlugstoreError(RuntimeError):
 def resolve_source(source: str, profile_dir: Path) -> str:
     """A `source` may be a git URL or a path; a relative path is
     profile-relative (SPEC §3.11), never relative to wherever the adapter
-    process happens to be running. URLs and scp-style remotes
-    (`[user@]host:path`, any username) pass through untouched."""
-    if "://" in source or re.match(r"^[A-Za-z0-9._-]+@[^/:]+:", source):
+    process happens to be running. URLs and scp-style remotes pass through
+    untouched, using git's own rule for the scp form: a colon before the
+    first slash means `[user@]host:path`, username optional."""
+    if "://" in source or re.match(r"^[^/]+:", source):
         return source
     path = Path(source).expanduser()
     if not path.is_absolute():
@@ -94,10 +96,11 @@ def materialize(
             "remove the directory and re-render"
         )
 
-    scratch = dest.parent / f".{pin}.partial"
-    if scratch.exists():
-        shutil.rmtree(scratch)
+    # A unique scratch directory per attempt: the store is shared across
+    # adapters, and two concurrent materializations of the same pin must
+    # not be able to delete each other's in-progress clone.
     dest.parent.mkdir(parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(prefix=f".{pin}.partial-", dir=dest.parent))
 
     try:
         clone = subprocess.run(
@@ -135,5 +138,15 @@ def materialize(
             f"checkout of {source!r} verified to HEAD {head!r}, not the "
             f"declared pin {pin} — refusing the checkout (SPEC §4.2)"
         )
-    scratch.rename(dest)
+    try:
+        scratch.rename(dest)
+    except OSError:
+        # A concurrent materialization won the rename. Its checkout is as
+        # good as ours if it verifies; anything else is a real failure.
+        shutil.rmtree(scratch, ignore_errors=True)
+        if dest.exists() and _head_of(dest) == pin:
+            return dest, True
+        raise PlugstoreError(
+            f"could not move the verified checkout into place at {dest}"
+        )
     return dest, True

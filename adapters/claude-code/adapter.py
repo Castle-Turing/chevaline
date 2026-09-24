@@ -543,6 +543,22 @@ def render_region(
     return "\n".join(parts)
 
 
+def check_marker_integrity(existing: str | None) -> None:
+    """The abort half of splice_claude_md, callable before side effects."""
+    if existing is None:
+        return
+    begin = existing.find(BEGIN_MARKER)
+    end = existing.find(END_MARKER)
+    if begin == -1 and end == -1:
+        return
+    if begin == -1 or end == -1 or end < begin:
+        raise SystemExit(
+            "ERROR: ~/.claude/CLAUDE.md contains a damaged chevaline marker pair "
+            "(one marker missing, or end before begin). Refusing to guess at the "
+            "owned region — fix the markers by hand and re-render."
+        )
+
+
 def splice_claude_md(existing: str | None, region: str) -> str:
     """Replace the marker-delimited region, or append one. Never touches
     text outside the markers (SPEC §4 item 3)."""
@@ -659,6 +675,54 @@ def delete_path_if_empty(obj: dict, dotted: str) -> None:
             del parent[key]
 
 
+def apply_enabled_plugins(
+    settings: dict, old_sidecar: dict, desired: list[str], report: Report
+) -> list[str]:
+    """Ensures `enabledPlugins` carries each desired identity as a literal
+    key, owned like everything else: only entries this adapter added are
+    ever removed, and a hand-written value wins. Identities are handled as
+    literal JSON keys — never as dotted paths — because a plugin id or a
+    marketplace name may legitimately contain a dot. Mutates `settings`;
+    returns the identities now owned."""
+    owned_before: list[str] = (old_sidecar.get("owned") or {}).get("enabledPlugins", [])
+    table = settings.get("enabledPlugins")
+    table = dict(table) if isinstance(table, dict) else {}
+    new_owned: list[str] = []
+    for ident in sorted(set(owned_before) | set(desired)):
+        current = table.get(ident)
+        ours = ident in owned_before
+        if ident not in desired:
+            if ours and ident in table:
+                del table[ident]
+                report.rendered.append(
+                    f"settings.json enabledPlugins[{ident!r}]: removed (no longer in profile)"
+                )
+            continue
+        if current is not None and not ours:
+            if current is True:
+                report.notes.append(
+                    f"settings.json enabledPlugins[{ident!r}]: already enabled by "
+                    "hand; not claiming ownership"
+                )
+            else:
+                report.conflicts.append(
+                    f"settings.json enabledPlugins[{ident!r}]: the profile wants it "
+                    "enabled, but the resident set it to a non-true value by hand — "
+                    "hand-written config wins (SPEC §4 item 3); remove the key and "
+                    "re-render to let the profile own it"
+                )
+            continue
+        if current is not True:
+            table[ident] = True
+            report.rendered.append(f"settings.json enabledPlugins[{ident!r}] = true")
+        new_owned.append(ident)
+    if table:
+        settings["enabledPlugins"] = table
+    else:
+        settings.pop("enabledPlugins", None)
+    return new_owned
+
+
 def apply_settings(
     settings: dict,
     sidecar: dict,
@@ -666,6 +730,7 @@ def apply_settings(
     scalars: dict[str, Any],
     report: Report,
     plugin_records: dict[str, dict] | None = None,
+    enabled_plugins: list[str] | None = None,
 ) -> tuple[dict, dict]:
     """Pure function from (current settings, current sidecar, desires) to
     (new settings, new sidecar). Ownership rules in the module docstring."""
@@ -736,6 +801,8 @@ def apply_settings(
             report.rendered.append(f"settings.json {path} = {desired!r}")
         new_scalar_owned.append(path)
 
+    plugin_owned = apply_enabled_plugins(settings, sidecar, enabled_plugins or [], report)
+
     new_sidecar = {
         "_comment": (
             "Sidecar manifest for the Chevaline claude-code adapter (SPEC §4 "
@@ -746,6 +813,7 @@ def apply_settings(
         "owned": {
             "scalars": sorted(new_scalar_owned),
             "listEntries": {k: v for k, v in sorted(new_list_owned.items())},
+            "enabledPlugins": sorted(plugin_owned),
         },
     }
     if plugin_records:
@@ -812,11 +880,11 @@ def render_plugins(
     claude_dir: Path,
     old_sidecar: dict,
     report: Report,
-) -> tuple[dict[str, Any], dict[str, dict], list[str]]:
-    """Returns (extra_scalars for settings.json, sidecar plugin records,
+) -> tuple[list[str], dict[str, dict], list[str]]:
+    """Returns (desired enabledPlugins identities, sidecar plugin records,
     errors). Runs the store materialization and marketplace registration —
     except under --dry-run, which only reports what would happen."""
-    scalars: dict[str, Any] = {}
+    identities: list[str] = []
     records: dict[str, dict] = {}
     errors: list[str] = []
 
@@ -946,12 +1014,6 @@ def render_plugins(
             )
             continue
         identity = f"{pid}@{mkt_name}"
-        if "." in identity:
-            report.skipped.append(
-                f"plugins.{pid} — identity '{identity}' contains a dot, which this "
-                "adapter's dotted-path settings ownership cannot represent; not rendered"
-            )
-            continue
 
         prior = old_records.get(pid)
         up_to_date = bool(
@@ -1025,7 +1087,7 @@ def render_plugins(
                 f"plugins.{pid}: registered local marketplace '{mkt_name}' → {checkout}"
             )
 
-        scalars[f"enabledPlugins.{identity}"] = True
+        identities.append(identity)
         records[pid] = {
             "identity": identity,
             "marketplace": mkt_name,
@@ -1065,7 +1127,7 @@ def render_plugins(
                 )
         report.rendered.append(f"plugins.{pid}: removed (no longer in profile)")
 
-    return scalars, records, errors
+    return identities, records, errors
 
 
 # --------------------------------------------------------------------------
@@ -1194,7 +1256,15 @@ def cmd_render(args: argparse.Namespace) -> int:
         return 1
     sidecar = json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
 
-    plugin_scalars, plugin_records, plugin_errors = render_plugins(
+    # The existing CLAUDE.md's marker pair is validated before any plugin
+    # side effect: a damaged pair aborts the render, and an abort after a
+    # clone or a marketplace registration would leave native state the
+    # sidecar never recorded.
+    md_path = claude_dir / "CLAUDE.md"
+    existing_md = md_path.read_text() if md_path.is_file() else None
+    check_marker_integrity(existing_md)
+
+    plugin_identities, plugin_records, plugin_errors = render_plugins(
         effective, args, profile_dir, claude_dir, sidecar, report
     )
 
@@ -1207,8 +1277,6 @@ def cmd_render(args: argparse.Namespace) -> int:
     region = render_region(
         effective, raw or {}, profile_dir, report, plugin_records=plugin_records
     )
-    md_path = claude_dir / "CLAUDE.md"
-    existing_md = md_path.read_text() if md_path.is_file() else None
     new_md = splice_claude_md(existing_md, region)
     if new_md != (existing_md or ""):
         report.rendered.append(
@@ -1220,9 +1288,9 @@ def cmd_render(args: argparse.Namespace) -> int:
         report.notes.append(f"{md_path}: already up to date")
 
     list_entries, scalars = desired_settings(effective, report)
-    scalars.update(plugin_scalars)
     new_settings, new_sidecar = apply_settings(
-        settings, sidecar, list_entries, scalars, report, plugin_records
+        settings, sidecar, list_entries, scalars, report,
+        plugin_records, plugin_identities,
     )
 
     report_unrenderable(effective, explain, report)

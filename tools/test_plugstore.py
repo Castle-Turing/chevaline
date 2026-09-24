@@ -113,6 +113,10 @@ class TestMaterialize(PlugstoreCase):
             plugstore.resolve_source("alice@example.invalid:org/plugin.git", profile),
             "alice@example.invalid:org/plugin.git",
         )
+        self.assertEqual(
+            plugstore.resolve_source("example.invalid:org/plugin.git", profile),
+            "example.invalid:org/plugin.git",
+        )
 
     def test_tampered_store_entry_is_refused(self):
         dest, _ = plugstore.materialize("p", str(self.repo), self.sha, self.store)

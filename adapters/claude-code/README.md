@@ -194,10 +194,11 @@ documented Claude Code surfaces (SPEC §3.11, §4.2):
    through the CLI; the internal `~/.claude/plugins/` state files are
    never written directly.
 3. **Enable** through the documented `enabledPlugins` settings key —
-   `"<id>@<marketplace>": true` — written and owned through the same
-   sidecar machinery as every other scalar, so a hand-written entry is
-   never clobbered and dropping the plugin from the profile un-renders
-   exactly what the adapter owned. The sidecar also records the
+   `"<id>@<marketplace>": true` — with the identity handled as a literal
+   JSON key (ids and marketplace names may contain dots, so dotted-path
+   machinery is deliberately not used) and owned in the sidecar, so a
+   hand-written entry is never clobbered and dropping the plugin from
+   the profile un-renders exactly what the adapter owned. The sidecar also records the
    checkout, pin, and marketplace per plugin, which is what makes
    re-renders idempotent (no CLI calls when nothing changed) and lets a
    dropped plugin's marketplace registration be removed.

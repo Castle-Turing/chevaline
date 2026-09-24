@@ -234,22 +234,24 @@ def desired_plugin_entries(
         if args.dry_run and not materialized:
             report.notes.append(
                 f"plugins.{pid}: DRY RUN — would materialize into {checkout} and add "
-                "its .opencode/plugins entry points to the config's `plugin` array"
+                "its .opencode plugin entry points to the config's `plugin` array"
             )
             continue
-        if not args.dry_run:
-            try:
-                checkout, fetched = plugstore.materialize(pid, source, pin, store)
-            except plugstore.PlugstoreError as e:
-                report.errors.append(f"plugins.{pid}: {e}")
-                continue
-            if fetched:
-                verb = {
-                    "silent": "materialized",
-                    "reported": "materialized (exec.install is 'reported': saying so)",
-                    "approval": "materialized (exec.install is 'approval'; authorized by --allow-install)",
-                }[level]
-                report.rendered.append(f"plugins.{pid}: {verb} {source} @ {pin[:12]} → {checkout}")
+        # Runs in dry-run mode too when the checkout exists: materialize is
+        # offline and mutation-free there, and it is the only HEAD-versus-pin
+        # verification — a dry run must not call a drifted store entry usable.
+        try:
+            checkout, fetched = plugstore.materialize(pid, source, pin, store)
+        except plugstore.PlugstoreError as e:
+            report.errors.append(f"plugins.{pid}: {e}")
+            continue
+        if fetched:
+            verb = {
+                "silent": "materialized",
+                "reported": "materialized (exec.install is 'reported': saying so)",
+                "approval": "materialized (exec.install is 'approval'; authorized by --allow-install)",
+            }[level]
+            report.rendered.append(f"plugins.{pid}: {verb} {source} @ {pin[:12]} → {checkout}")
 
         # OpenCode plugins are JavaScript or TypeScript entry points, and
         # both documented directory spellings are honored — `plugin/` and

@@ -741,7 +741,7 @@ class TestPluginRender(PluginCase):
         self.assertEqual(calls, [f"plugin marketplace add {checkout}"])
         self.assertIs(self.settings()["enabledPlugins"]["pony@pony"], True)
         side = self.sidecar()
-        self.assertIn("enabledPlugins.pony@pony", side["owned"]["scalars"])
+        self.assertIn("pony@pony", side["owned"]["enabledPlugins"])
         self.assertEqual(side["plugins"]["pony"]["identity"], "pony@pony")
         self.assertEqual(side["plugins"]["pony"]["pin"], self.pin)
 
@@ -844,6 +844,30 @@ class TestPluginRender(PluginCase):
         rc, out = self.render()
         self.assertEqual(rc, 0, out)
         self.assertTrue((self.store / "pony" / self.pin).is_dir())
+
+    def test_dotted_marketplace_identity_is_enabled_literally(self):
+        write(
+            self.plugin_repo / ".claude-plugin" / "marketplace.json",
+            json.dumps(
+                {"name": "pony.tail", "plugins": [{"name": "pony", "source": "./"}]}
+            ),
+        )
+        _git("add", "-A", cwd=self.plugin_repo)
+        _git("commit", "--quiet", "-m", "dotted marketplace", cwd=self.plugin_repo)
+        self.pin = _git("rev-parse", "HEAD", cwd=self.plugin_repo)
+        self.write_profile(install_level="silent")
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        self.assertIs(self.settings()["enabledPlugins"]["pony@pony.tail"], True)
+        self.assertIn("pony@pony.tail", self.sidecar()["owned"]["enabledPlugins"])
+
+    def test_damaged_markers_abort_before_any_side_effect(self):
+        write(self.claude / "CLAUDE.md", adapter.BEGIN_MARKER + "\nno end marker\n")
+        self.write_profile(install_level="silent")
+        with self.assertRaises(SystemExit):
+            self.render()
+        self.assertFalse(self.store.exists())
+        self.assertEqual(self.cli_calls(), [])
 
     def test_existing_store_entry_is_reverified_each_render(self):
         self.write_profile(install_level="silent")
