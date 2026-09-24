@@ -474,6 +474,11 @@ def cmd_render(args: argparse.Namespace) -> int:
     sidecar_path = opencode_dir / SIDECAR_NAME
     sidecar = json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
     recorded_target = sidecar.get("target")
+    # Only the adapter's own config basenames are honored: a corrupted or
+    # hand-edited sidecar must not be able to point writes at an arbitrary
+    # file (SPEC §4 item 6).
+    if recorded_target not in ("opencode.json", "opencode.jsonc"):
+        recorded_target = None
     if isinstance(recorded_target, str) and (opencode_dir / recorded_target).is_file():
         cfg_path = opencode_dir / recorded_target
         preferred = config_path(opencode_dir)

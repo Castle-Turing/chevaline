@@ -741,6 +741,7 @@ def apply_settings(
     report: Report,
     plugin_records: dict[str, dict] | None = None,
     enabled_plugins: list[str] | None = None,
+    stale_marketplaces: list[str] | None = None,
 ) -> tuple[dict, dict]:
     """Pure function from (current settings, current sidecar, desires) to
     (new settings, new sidecar). Ownership rules in the module docstring."""
@@ -828,6 +829,8 @@ def apply_settings(
     }
     if plugin_records:
         new_sidecar["plugins"] = {k: v for k, v in sorted(plugin_records.items())}
+    if stale_marketplaces:
+        new_sidecar["staleMarketplaces"] = sorted(set(stale_marketplaces))
     return settings, new_sidecar
 
 
@@ -890,7 +893,7 @@ def render_plugins(
     claude_dir: Path,
     old_sidecar: dict,
     report: Report,
-) -> tuple[list[str], dict[str, dict], list[str]]:
+) -> tuple[list[str], dict[str, dict], list[str], list[str]]:
     """Returns (desired enabledPlugins identities, sidecar plugin records,
     errors). Runs the store materialization and marketplace registration —
     except under --dry-run, which only reports what would happen."""
@@ -922,9 +925,13 @@ def render_plugins(
     # marketplace at a DIFFERENT pin is a genuine conflict.
     session_registered: dict[str, tuple[str, str]] = {}
     # Marketplace names left behind by entries that moved to a different
-    # marketplace this render; removed at the end, and only if nothing in
-    # the desired state still uses them.
-    stale_marketplaces: list[str] = []
+    # marketplace — this render's, plus any a previous render failed to
+    # remove (persisted in the sidecar so the retry survives the render
+    # that noticed the failure). Removed at the end, and only if nothing
+    # in the desired state still uses them.
+    stale_marketplaces: list[str] = [
+        m for m in (old_sidecar.get("staleMarketplaces") or []) if isinstance(m, str)
+    ]
 
     for entry in plugins:
         pid, pin = entry["id"], entry["pin"]
@@ -1201,62 +1208,66 @@ def render_plugins(
     live_marketplaces = {
         r["marketplace"] for r in records.values() if not r.get("pendingRemoval")
     }
-    for mkt_name in sorted(set(stale_marketplaces)):
-        if mkt_name in live_marketplaces or args.dry_run:
-            continue
+
+    def _remove_marketplace(mkt: str) -> bool:
+        """One documented removal attempt; True on success."""
         try:
             removal = run_claude_cli(
                 args.claude_cli, claude_dir,
-                ["plugin", "marketplace", "remove", mkt_name],
+                ["plugin", "marketplace", "remove", mkt],
             )
-            if removal.returncode != 0:
-                report.notes.append(
-                    f"plugins: `claude plugin marketplace remove {mkt_name}` "
-                    f"failed ({(removal.stderr or removal.stdout).strip()}); remove it "
-                    "by hand with /plugin"
-                )
         except (OSError, subprocess.SubprocessError) as e:
             report.notes.append(
-                f"plugins: could not run the CLI to remove stale marketplace "
-                f"'{mkt_name}' ({e}); remove it by hand with /plugin"
+                f"plugins: could not run the CLI to remove marketplace "
+                f"'{mkt}' ({e}); kept for retry on the next render"
             )
-    for pid, rec in sorted(old_records.items()):
-        if pid in records:
-            continue
+            return False
+        if removal.returncode != 0:
+            report.notes.append(
+                f"plugins: `claude plugin marketplace remove {mkt}` failed "
+                f"({(removal.stderr or removal.stdout).strip()}); kept for retry "
+                "on the next render"
+            )
+            return False
+        return True
+
+    # Every marketplace due for removal — from moved entries (this render
+    # or persisted from a failed earlier one) and from dropped plugins —
+    # is attempted exactly ONCE, and the one result applies to every
+    # record that referenced it: a second per-record attempt would read an
+    # already-absent answer as a failure and retry forever.
+    dropped = {
+        pid: rec for pid, rec in old_records.items() if pid not in records
+    }
+    due = {m for m in stale_marketplaces if m not in live_marketplaces}
+    for rec in dropped.values():
+        m = rec.get("marketplace")
+        if m and m not in live_marketplaces:
+            due.add(m)
+
+    failed_marketplaces: set[str] = set()
+    if not args.dry_run:
+        for mkt_name in sorted(due):
+            if not _remove_marketplace(mkt_name):
+                failed_marketplaces.add(mkt_name)
+
+    for pid, rec in sorted(dropped.items()):
         if args.dry_run:
             report.notes.append(f"plugins.{pid}: DRY RUN — would remove (no longer in profile)")
             records[pid] = rec  # keep the record; nothing was actually removed
             continue
         mkt_name = rec.get("marketplace")
-        removal_failed = False
-        if mkt_name and mkt_name not in live_marketplaces:
-            try:
-                removal = run_claude_cli(
-                    args.claude_cli, claude_dir,
-                    ["plugin", "marketplace", "remove", mkt_name],
-                )
-                removal_failed = removal.returncode != 0
-                if removal_failed:
-                    report.notes.append(
-                        f"plugins.{pid}: `claude plugin marketplace remove {mkt_name}` "
-                        f"failed ({(removal.stderr or removal.stdout).strip()}); the "
-                        "record is kept so the next render retries"
-                    )
-            except (OSError, subprocess.SubprocessError) as e:
-                removal_failed = True
-                report.notes.append(
-                    f"plugins.{pid}: could not run the CLI to remove marketplace "
-                    f"'{mkt_name}' ({e}); the record is kept so the next render retries"
-                )
-        if removal_failed:
-            # Forgetting the record here would orphan an adapter-owned
-            # marketplace forever; keeping it flagged lets every later
-            # render retry, without counting it as live or enabling it.
+        if mkt_name and mkt_name in failed_marketplaces:
             records[pid] = {**rec, "pendingRemoval": True}
             continue
         report.rendered.append(f"plugins.{pid}: removed (no longer in profile)")
 
-    return identities, records, errors
+    stale_failed = sorted(
+        failed_marketplaces
+        - {r.get("marketplace") for r in records.values() if r.get("pendingRemoval")}
+    ) if not args.dry_run else sorted(set(stale_marketplaces))
+
+    return identities, records, stale_failed, errors
 
 
 # --------------------------------------------------------------------------
@@ -1424,7 +1435,7 @@ def cmd_render(args: argparse.Namespace) -> int:
             )
             return 1
 
-    plugin_identities, plugin_records, plugin_errors = render_plugins(
+    plugin_identities, plugin_records, stale_failed, plugin_errors = render_plugins(
         effective, args, profile_dir, claude_dir, sidecar, report
     )
 
@@ -1467,7 +1478,7 @@ def cmd_render(args: argparse.Namespace) -> int:
     list_entries, scalars = desired_settings(effective, report)
     new_settings, new_sidecar = apply_settings(
         settings, sidecar, list_entries, scalars, report,
-        plugin_records, plugin_identities,
+        plugin_records, plugin_identities, stale_failed,
     )
 
     report_unrenderable(effective, explain, report)

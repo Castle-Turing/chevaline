@@ -811,12 +811,82 @@ class TestPluginRender(PluginCase):
         self.write_profile(install_level="silent", plugins="")
         rc, out = self.render()
         self.assertEqual(rc, 0, out)
-        self.assertIn("retries", out)
+        self.assertIn("retry", out)
         self.assertTrue(self.sidecar()["plugins"]["pony"]["pendingRemoval"])
         removes_before = [c for c in self.cli_calls() if "remove" in c]
         rc, _ = self.render()
         removes_after = [c for c in self.cli_calls() if "remove" in c]
         self.assertGreater(len(removes_after), len(removes_before))
+
+    def test_shared_marketplace_removed_once_for_two_dropped_plugins(self):
+        write(
+            self.plugin_repo / ".claude-plugin" / "marketplace.json",
+            json.dumps({"name": "pony", "plugins": [
+                {"name": "pony", "source": "./"}, {"name": "tail", "source": "./"},
+            ]}),
+        )
+        _git("add", "-A", cwd=self.plugin_repo)
+        _git("commit", "--quiet", "-m", "two plugins", cwd=self.plugin_repo)
+        self.pin = _git("rev-parse", "HEAD", cwd=self.plugin_repo)
+        both = (
+            "[[plugins]]\n"
+            'id = "pony"\n'
+            f'source = "{self.plugin_repo}"\n'
+            f'pin = "{self.pin}"\n'
+            "\n[[plugins]]\n"
+            'id = "tail"\n'
+            f'source = "{self.plugin_repo}"\n'
+            f'pin = "{self.pin}"\n'
+        )
+        self.write_profile(install_level="silent", plugins=both)
+        self.render()
+        self.write_profile(install_level="silent", plugins="")
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        removes = [c for c in self.cli_calls() if "remove" in c]
+        self.assertEqual(removes, ["plugin marketplace remove pony"])
+        self.assertNotIn("plugins", self.sidecar())
+
+    def test_failed_stale_removal_persists_for_retry_after_a_move(self):
+        self.write_profile(install_level="silent")
+        self.render()
+        # Move the plugin to a new marketplace while removals fail.
+        second = self.plugin_repo.parent / "second-src"
+        second.mkdir()
+        write(second / ".claude-plugin" / "marketplace.json",
+              json.dumps({"name": "mkt2", "plugins": [{"name": "pony", "source": "./"}]}))
+        _git("init", "--quiet", cwd=second)
+        _git("add", "-A", cwd=second)
+        _git("commit", "--quiet", "-m", "initial", cwd=second)
+        pin2 = _git("rev-parse", "HEAD", cwd=second)
+        self.cli.write_text(
+            "#!/bin/sh\n"
+            f'echo "$@" >> "{self.cli_log}"\n'
+            'case "$*" in *remove*) exit 1;; *) exit 0;; esac\n'
+        )
+        self.cli.chmod(self.cli.stat().st_mode | stat.S_IXUSR)
+        self.write_profile(
+            install_level="silent",
+            plugins=(
+                "[[plugins]]\n"
+                'id = "pony"\n'
+                f'source = "{second}"\n'
+                f'pin = "{pin2}"\n'
+            ),
+        )
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("pony", self.sidecar()["staleMarketplaces"])
+        # Removals succeed again: the retry clears the stale name.
+        self.cli.write_text(
+            "#!/bin/sh\n"
+            f'echo "$@" >> "{self.cli_log}"\n'
+            "exit 0\n"
+        )
+        self.cli.chmod(self.cli.stat().st_mode | stat.S_IXUSR)
+        rc, _ = self.render()
+        self.assertEqual(rc, 0)
+        self.assertNotIn("staleMarketplaces", self.sidecar())
 
     def test_missing_claude_packaging_is_reported_not_guessed(self):
         # A source with no .claude-plugin/marketplace.json: nothing to register.

@@ -185,6 +185,19 @@ class TestPlugins(OpencodeCase):
         self.assertEqual(rc, 0)
         self.assertEqual(self.config()["plugin"], ["@vendor/theirs"])
 
+    def test_corrupted_sidecar_target_cannot_redirect_writes(self):
+        outside = Path(self.tmp.name) / "outside.json"
+        outside.write_text("{}")
+        write(
+            self.opencode / adapter.SIDECAR_NAME,
+            json.dumps({"owned": {"plugin": []}, "target": "../outside.json"}),
+        )
+        self.write_profile()
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(outside.read_text(), "{}")
+        self.assertIn("plugin", self.config())  # wrote opencode.json instead
+
     def test_config_target_stays_put_when_jsonc_appears_later(self):
         self.write_profile()
         self.render()  # writes opencode.json and records it as the target
