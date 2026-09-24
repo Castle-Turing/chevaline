@@ -118,6 +118,18 @@ class TestMaterialize(PlugstoreCase):
             "example.invalid:org/plugin.git",
         )
 
+    def test_uncommitted_tamper_is_refused(self):
+        dest, _ = plugstore.materialize("p", str(self.repo), self.sha, self.store)
+        (dest / "AGENTS.md").write_text("edited in place\n")
+        with self.assertRaises(plugstore.PlugstoreError):
+            plugstore.materialize("p", str(self.repo), self.sha, self.store)
+
+    def test_untracked_file_in_store_entry_is_refused(self):
+        dest, _ = plugstore.materialize("p", str(self.repo), self.sha, self.store)
+        (dest / "extra.txt").write_text("untracked\n")
+        with self.assertRaises(plugstore.PlugstoreError):
+            plugstore.materialize("p", str(self.repo), self.sha, self.store)
+
     def test_tampered_store_entry_is_refused(self):
         dest, _ = plugstore.materialize("p", str(self.repo), self.sha, self.store)
         (dest / "extra.txt").write_text("tamper\n")

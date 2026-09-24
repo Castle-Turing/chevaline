@@ -187,7 +187,11 @@ def install_authority(effective: dict) -> str:
 
 
 def desired_plugin_entries(
-    effective: dict, args: argparse.Namespace, profile_dir: Path, report: Report
+    effective: dict,
+    args: argparse.Namespace,
+    profile_dir: Path,
+    prior_owned: list[str],
+    report: Report,
 ) -> list[str]:
     """The absolute .mjs paths the config's `plugin` array should carry.
     Materializes checkouts (authority-gated) except under --dry-run."""
@@ -240,6 +244,19 @@ def desired_plugin_entries(
                 f"plugins.{pid}: DRY RUN — would materialize into {checkout} and add "
                 "its .opencode plugin entry points to the config's `plugin` array"
             )
+            retained = [
+                e for e in prior_owned
+                if e.startswith(str(store / pid) + "/")
+            ]
+            if retained:
+                # The fetch was skipped only because this is a dry run;
+                # projecting the prior entries as removed would describe a
+                # removal no real render performs.
+                entries.extend(retained)
+                report.notes.append(
+                    f"plugins.{pid}: DRY RUN — post-fetch state unknown; the "
+                    "projection retains the prior entries"
+                )
             continue
         # Runs in dry-run mode too when the checkout exists: materialize is
         # offline and mutation-free there, and it is the only HEAD-versus-pin
@@ -261,12 +278,31 @@ def desired_plugin_entries(
         # both documented directory spellings are honored — `plugin/` and
         # `plugins/`. `.cjs` helpers are deliberately excluded (they are
         # modules the entry points require, not plugins of their own).
+        # Every discovered entry must be a regular file whose real path
+        # stays inside the pinned checkout: a tracked symlink pointing
+        # outside would load mutable content the pin never covered.
+        real_checkout = checkout.resolve()
         points: list[Path] = []
+        escaped: list[Path] = []
         for dirname in ("plugin", "plugins"):
             plugin_dir = checkout / ".opencode" / dirname
             if plugin_dir.is_dir():
                 for pattern in ("*.mjs", "*.js", "*.ts"):
-                    points.extend(plugin_dir.glob(pattern))
+                    for candidate in plugin_dir.glob(pattern):
+                        resolved = candidate.resolve()
+                        if resolved.is_file() and resolved.is_relative_to(real_checkout):
+                            points.append(candidate)
+                        else:
+                            escaped.append(candidate)
+        if escaped:
+            report.errors.append(
+                f"plugins.{pid}: entry point(s) "
+                + ", ".join(str(e) for e in escaped)
+                + " resolve outside the pinned checkout (or are not regular "
+                "files) — loading them would execute content the pin never "
+                "verified (SPEC §4.2); refusing"
+            )
+            continue
         if not points:
             report.skipped.append(
                 f"plugins.{pid} — the checkout has no .opencode/plugin[s]/*.mjs|js|ts "
@@ -297,6 +333,19 @@ def apply_config(
     config = dict(config)
     previously_ours: list[str] = (sidecar.get("owned") or {}).get("plugin", [])
     current = config.get("plugin")
+    if current is not None and not isinstance(current, list):
+        # A hand-written non-list value is a conflict, not raw material:
+        # replacing it would clobber state this adapter never owned.
+        report.conflicts.append(
+            f"opencode config plugin is {type(current).__name__}-shaped, not "
+            "an array — hand-written config wins (SPEC §4 item 3); fix it by "
+            "hand and re-render to let the profile add plugin entries"
+        )
+        new_sidecar = {
+            "_comment": sidecar.get("_comment") or "",
+            "owned": {"plugin": []},
+        }
+        return config, new_sidecar
     current_list = list(current) if isinstance(current, list) else []
     kept = [e for e in current_list if e not in previously_ours]
     added = []
@@ -434,7 +483,8 @@ def cmd_render(args: argparse.Namespace) -> int:
         config = {}
     sidecar = json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
 
-    wanted = desired_plugin_entries(effective, args, profile_dir, report)
+    prior_owned = (sidecar.get("owned") or {}).get("plugin", [])
+    wanted = desired_plugin_entries(effective, args, profile_dir, prior_owned, report)
     new_config, new_sidecar = apply_config(config, sidecar, wanted, report)
 
     report_unrenderable(effective, report)

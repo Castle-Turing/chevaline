@@ -951,6 +951,18 @@ def render_plugins(
                 "marketplace add`, and enable it via the owned "
                 "`enabledPlugins` settings key"
             )
+            prior = old_records.get(pid)
+            if prior:
+                # The plugin stays declared; the fetch was skipped only
+                # because this is a dry run. Feeding an empty projection
+                # into cleanup would report the prior registration as
+                # removed — a removal no real render would perform.
+                identities.append(prior["identity"])
+                records[pid] = prior
+                report.notes.append(
+                    f"plugins.{pid}: DRY RUN — post-fetch state unknown; the "
+                    "projection retains the prior registration"
+                )
             continue
 
         # Runs for existing checkouts too: materialize is offline and
@@ -1292,9 +1304,21 @@ def cmd_render(args: argparse.Namespace) -> int:
     # renders from the raw manifest — resolve_profile strips
     # [[environment]] out of `effective`, and the declared overrides must
     # appear regardless of what matched here.
+    # The region's plugins prose claims native loading, so it is built
+    # from the PROJECTED enablement — a registered checkout whose
+    # enablement apply_enabled_plugins will decline (hand-written false or
+    # a non-object table) must not be presented as loaded.
+    projected = apply_enabled_plugins(
+        copy.deepcopy(settings), sidecar, plugin_identities, Report()
+    )
+    prose_records = {
+        pid: rec for pid, rec in plugin_records.items()
+        if rec.get("identity") in projected
+    }
+
     raw, _ = ch.load_manifest(profile_dir)
     region = render_region(
-        effective, raw or {}, profile_dir, report, plugin_records=plugin_records
+        effective, raw or {}, profile_dir, report, plugin_records=prose_records
     )
     new_md = splice_claude_md(existing_md, region)
     if new_md != (existing_md or ""):

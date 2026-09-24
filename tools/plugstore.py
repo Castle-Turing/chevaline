@@ -46,6 +46,25 @@ def default_store() -> Path:
     return base / "chevaline" / "plugins"
 
 
+def _is_dirty(checkout: Path) -> bool:
+    """True when the working tree differs from HEAD — tracked edits or
+    untracked files. An in-place edit leaves HEAD equal to the pin while
+    the content is no longer what the pin covers, so HEAD alone is not
+    verification. Unreadable state counts as dirty: fail closed."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(checkout), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if result.returncode != 0:
+        return True
+    return bool(result.stdout.strip())
+
+
 def _head_of(checkout: Path) -> str | None:
     try:
         result = subprocess.run(
@@ -88,13 +107,19 @@ def materialize(
 
     if dest.exists():
         head = _head_of(dest)
-        if head == pin:
-            return dest, False
-        raise PlugstoreError(
-            f"plugin store entry {dest} exists but its HEAD is {head!r}, not "
-            f"the declared pin {pin} — refusing to use or repair it silently; "
-            "remove the directory and re-render"
-        )
+        if head != pin:
+            raise PlugstoreError(
+                f"plugin store entry {dest} exists but its HEAD is {head!r}, not "
+                f"the declared pin {pin} — refusing to use or repair it silently; "
+                "remove the directory and re-render"
+            )
+        if _is_dirty(dest):
+            raise PlugstoreError(
+                f"plugin store entry {dest} is at the declared pin but its "
+                "working tree has been modified — the content is no longer "
+                "what the pin covers; remove the directory and re-render"
+            )
+        return dest, False
 
     # A unique scratch directory per attempt: the store is shared across
     # adapters, and two concurrent materializations of the same pin must

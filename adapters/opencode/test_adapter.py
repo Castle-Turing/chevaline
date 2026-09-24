@@ -254,6 +254,43 @@ class TestPlugins(OpencodeCase):
         self.assertFalse(self.store.exists())
         self.assertNotIn("plugin", self.config())
 
+    def test_symlinked_entry_point_escaping_checkout_is_refused(self):
+        outside = self.plugin_repo.parent / "outside.mjs"
+        outside.write_text("// mutable\n")
+        (self.plugin_repo / ".opencode" / "plugins" / "evil.mjs").symlink_to(
+            "../../../outside.mjs"
+        )
+        _git("add", "-A", cwd=self.plugin_repo)
+        _git("commit", "--quiet", "-m", "symlink entry", cwd=self.plugin_repo)
+        self.pin = _git("rev-parse", "HEAD", cwd=self.plugin_repo)
+        self.write_profile()
+        rc, out = self.render()
+        self.assertEqual(rc, 1)
+        self.assertIn("resolve outside the pinned checkout", out)
+
+    def test_non_list_plugin_value_is_a_conflict_not_raw_material(self):
+        write(self.opencode / "opencode.json", json.dumps({"plugin": "not-a-list"}))
+        self.write_profile()
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.config()["plugin"], "not-a-list")
+        self.assertIn("-shaped, not", out)
+
+    def test_dry_run_on_a_new_pin_does_not_project_removal(self):
+        self.write_profile()
+        self.render()
+        write(self.plugin_repo / "CHANGED.md", "new content\n")
+        _git("add", "-A", cwd=self.plugin_repo)
+        _git("commit", "--quiet", "-m", "new pin", cwd=self.plugin_repo)
+        self.pin = _git("rev-parse", "HEAD", cwd=self.plugin_repo)
+        old_entry = self.config()["plugin"][0]
+        self.write_profile()
+        rc, out = self.render("--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("removed formerly-owned", out)
+        self.assertIn("post-fetch state unknown", out)
+        self.assertEqual(self.config()["plugin"], [old_entry])
+
     def test_no_opencode_packaging_is_reported(self):
         (self.plugin_repo / ".opencode" / "plugins" / "pony.mjs").unlink()
         _git("add", "-A", cwd=self.plugin_repo)

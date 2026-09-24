@@ -907,6 +907,30 @@ class TestPluginRender(PluginCase):
         self.assertEqual(self.settings()["enabledPlugins"], ["weird"])
         self.assertIn("-shaped, not an object", out)
 
+    def test_prose_omits_a_plugin_whose_enablement_was_declined(self):
+        write(self.claude / "settings.json", json.dumps({"enabledPlugins": {"pony@pony": False}}))
+        self.write_profile(install_level="silent")
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        md = (self.claude / "CLAUDE.md").read_text()
+        self.assertNotIn("pinned checkout: `", md)
+        self.assertIn("Declared but not installed by the last render", md)
+        self.assertIs(self.settings()["enabledPlugins"]["pony@pony"], False)
+
+    def test_dry_run_on_a_new_pin_does_not_project_removal(self):
+        self.write_profile(install_level="silent")
+        self.render()
+        write(self.plugin_repo / "CHANGED.md", "new content\n")
+        _git("add", "-A", cwd=self.plugin_repo)
+        _git("commit", "--quiet", "-m", "new pin", cwd=self.plugin_repo)
+        self.pin = _git("rev-parse", "HEAD", cwd=self.plugin_repo)
+        self.write_profile(install_level="silent")
+        rc, out = self.render("--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("would remove", out)
+        self.assertNotIn("removed (no longer in profile)", out)
+        self.assertIn("post-fetch state unknown", out)
+
     def test_dotted_marketplace_identity_is_enabled_literally(self):
         write(
             self.plugin_repo / ".claude-plugin" / "marketplace.json",
