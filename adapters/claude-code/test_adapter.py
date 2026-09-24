@@ -931,6 +931,80 @@ class TestPluginRender(PluginCase):
         self.assertNotIn("removed (no longer in profile)", out)
         self.assertIn("post-fetch state unknown", out)
 
+    def test_non_object_settings_abort_before_side_effects(self):
+        write(self.claude / "settings.json", "[]")
+        self.write_profile(install_level="silent")
+        rc, _ = self.render()
+        self.assertEqual(rc, 1)
+        self.assertFalse(self.store.exists())
+        self.assertEqual(self.cli_calls(), [])
+
+    def test_symlinked_marketplace_manifest_is_refused(self):
+        outside = self.plugin_repo.parent / "outside-mkt.json"
+        outside.write_text(json.dumps({"name": "pony", "plugins": [{"name": "pony", "source": "./"}]}))
+        (self.plugin_repo / ".claude-plugin" / "marketplace.json").unlink()
+        # Absolute on purpose: the attack needs the symlink to resolve to an
+        # existing mutable file from wherever the checkout is materialized.
+        (self.plugin_repo / ".claude-plugin" / "marketplace.json").symlink_to(outside)
+        _git("add", "-A", cwd=self.plugin_repo)
+        _git("commit", "--quiet", "-m", "symlink manifest", cwd=self.plugin_repo)
+        self.pin = _git("rev-parse", "HEAD", cwd=self.plugin_repo)
+        self.write_profile(install_level="silent")
+        rc, out = self.render()
+        self.assertEqual(rc, 1)
+        self.assertIn("marketplace.json resolves outside", out)
+
+    def test_moving_one_plugin_off_a_shared_marketplace_keeps_it_for_the_other(self):
+        # Round-8 P2: A stays on marketplace pony; B moves to a new
+        # marketplace; pony must not be removed out from under A.
+        write(
+            self.plugin_repo / ".claude-plugin" / "marketplace.json",
+            json.dumps({"name": "pony", "plugins": [
+                {"name": "pony", "source": "./"}, {"name": "tail", "source": "./"},
+            ]}),
+        )
+        _git("add", "-A", cwd=self.plugin_repo)
+        _git("commit", "--quiet", "-m", "two plugins", cwd=self.plugin_repo)
+        self.pin = _git("rev-parse", "HEAD", cwd=self.plugin_repo)
+        both = (
+            "[[plugins]]\n"
+            'id = "pony"\n'
+            f'source = "{self.plugin_repo}"\n'
+            f'pin = "{self.pin}"\n'
+            "\n[[plugins]]\n"
+            'id = "tail"\n'
+            f'source = "{self.plugin_repo}"\n'
+            f'pin = "{self.pin}"\n'
+        )
+        self.write_profile(install_level="silent", plugins=both)
+        self.render()
+
+        second = self.plugin_repo.parent / "tail-src"
+        second.mkdir()
+        write(second / ".claude-plugin" / "marketplace.json",
+              json.dumps({"name": "tailmkt", "plugins": [{"name": "tail", "source": "./"}]}))
+        _git("init", "--quiet", cwd=second)
+        _git("add", "-A", cwd=second)
+        _git("commit", "--quiet", "-m", "initial", cwd=second)
+        tail_pin = _git("rev-parse", "HEAD", cwd=second)
+        moved = (
+            "[[plugins]]\n"
+            'id = "pony"\n'
+            f'source = "{self.plugin_repo}"\n'
+            f'pin = "{self.pin}"\n'
+            "\n[[plugins]]\n"
+            'id = "tail"\n'
+            f'source = "{second}"\n'
+            f'pin = "{tail_pin}"\n'
+        )
+        self.write_profile(install_level="silent", plugins=moved)
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("plugin marketplace remove pony", self.cli_calls())
+        enabled = self.settings()["enabledPlugins"]
+        self.assertIs(enabled["pony@pony"], True)
+        self.assertIs(enabled["tail@tailmkt"], True)
+
     def test_hand_enabled_plugin_counts_as_delivered_in_prose(self):
         write(self.claude / "settings.json", json.dumps({"enabledPlugins": {"pony@pony": True}}))
         self.write_profile(install_level="silent")

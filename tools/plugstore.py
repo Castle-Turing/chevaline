@@ -52,8 +52,11 @@ def _is_dirty(checkout: Path) -> bool:
     the content is no longer what the pin covers, so HEAD alone is not
     verification. Unreadable state counts as dirty: fail closed."""
     try:
+        # --ignored: a fresh clone contains no ignored files, so anything
+        # the plugin's own .gitignore hides was added after the clone and
+        # is exactly the kind of content the pin does not cover.
         result = subprocess.run(
-            ["git", "-C", str(checkout), "status", "--porcelain"],
+            ["git", "-C", str(checkout), "status", "--porcelain", "--ignored"],
             capture_output=True,
             text=True,
             timeout=10,

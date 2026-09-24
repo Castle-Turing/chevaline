@@ -130,6 +130,16 @@ class TestMaterialize(PlugstoreCase):
         with self.assertRaises(plugstore.PlugstoreError):
             plugstore.materialize("p", str(self.repo), self.sha, self.store)
 
+    def test_gitignored_addition_is_refused(self):
+        (self.repo / ".gitignore").write_text("*.secret\n")
+        git("add", "-A", cwd=self.repo)
+        git("commit", "--quiet", "-m", "ignore rule", cwd=self.repo)
+        self.sha = git("rev-parse", "HEAD", cwd=self.repo)
+        dest, _ = plugstore.materialize("p", str(self.repo), self.sha, self.store)
+        (dest / "evil.secret").write_text("not covered by the pin\n")
+        with self.assertRaises(plugstore.PlugstoreError):
+            plugstore.materialize("p", str(self.repo), self.sha, self.store)
+
     def test_tampered_store_entry_is_refused(self):
         dest, _ = plugstore.materialize("p", str(self.repo), self.sha, self.store)
         (dest / "extra.txt").write_text("tamper\n")

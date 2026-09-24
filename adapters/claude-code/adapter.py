@@ -921,6 +921,10 @@ def render_plugins(
     # which the CLI would refuse as already existing — and a same-name
     # marketplace at a DIFFERENT pin is a genuine conflict.
     session_registered: dict[str, tuple[str, str]] = {}
+    # Marketplace names left behind by entries that moved to a different
+    # marketplace this render; removed at the end, and only if nothing in
+    # the desired state still uses them.
+    stale_marketplaces: list[str] = []
 
     for entry in plugins:
         pid, pin = entry["id"], entry["pin"]
@@ -994,6 +998,16 @@ def render_plugins(
         # guard. A dry run that dropped the desired records here would then
         # report removals a real render would never perform.
         mkt_path = checkout / ".claude-plugin" / "marketplace.json"
+        real_checkout = checkout.resolve()
+        if mkt_path.is_file():
+            resolved_mkt = mkt_path.resolve()
+            if not (resolved_mkt.is_file() and resolved_mkt.is_relative_to(real_checkout)):
+                errors.append(
+                    f"plugins.{pid}: marketplace.json resolves outside the pinned "
+                    "checkout — registering metadata the pin never verified is "
+                    "refused (SPEC §4.2)"
+                )
+                continue
         if not mkt_path.is_file():
             report.skipped.append(
                 f"plugins.{pid} — the checkout has no .claude-plugin/marketplace.json, "
@@ -1039,7 +1053,6 @@ def render_plugins(
         if src_ok:
             # Real paths, not lexical ones: a tracked symlink can point
             # outside the checkout while normpath stays inside it.
-            real_checkout = checkout.resolve()
             resolved = (checkout / plugin_src).resolve()
             src_ok = resolved == real_checkout or resolved.is_relative_to(real_checkout)
         if not src_ok:
@@ -1086,10 +1099,13 @@ def render_plugins(
             )
         else:
             try:
-                # Reaching here with a prior record means the pin or the
-                # checkout location changed; either way the old registration
-                # points somewhere stale and is removed before the re-add.
-                if prior and prior.get("marketplace"):
+                # Reaching here with a prior record means the pin, checkout
+                # location, or marketplace changed. A prior registration
+                # under the SAME name must be removed now so the re-add can
+                # claim the name; a prior registration under a DIFFERENT
+                # name may still be needed by another entry, so its removal
+                # is deferred until every desired registration is known.
+                if prior and prior.get("marketplace") == mkt_name:
                     removal = run_claude_cli(
                         args.claude_cli, claude_dir,
                         ["plugin", "marketplace", "remove", prior["marketplace"]],
@@ -1100,6 +1116,8 @@ def render_plugins(
                             f"registration before re-registering ({(removal.stderr or removal.stdout).strip()}); "
                             "continuing with the add"
                         )
+                elif prior and prior.get("marketplace"):
+                    stale_marketplaces.append(prior["marketplace"])
                 added = run_claude_cli(
                     args.claude_cli, claude_dir,
                     ["plugin", "marketplace", "add", str(checkout)],
@@ -1153,9 +1171,29 @@ def render_plugins(
         }
 
     # Plugins the profile no longer declares (or no longer aims at this
-    # harness): their enabledPlugins scalar un-renders through the ordinary
-    # scalar-ownership path; the marketplace registration is removed here.
+    # harness): their enabledPlugins entry un-renders through the ordinary
+    # ownership path; the marketplace registration is removed here. Stale
+    # names from re-registrations join the same still-in-use check.
     live_marketplaces = {r["marketplace"] for r in records.values()}
+    for mkt_name in sorted(set(stale_marketplaces)):
+        if mkt_name in live_marketplaces or args.dry_run:
+            continue
+        try:
+            removal = run_claude_cli(
+                args.claude_cli, claude_dir,
+                ["plugin", "marketplace", "remove", mkt_name],
+            )
+            if removal.returncode != 0:
+                report.notes.append(
+                    f"plugins: `claude plugin marketplace remove {mkt_name}` "
+                    f"failed ({(removal.stderr or removal.stdout).strip()}); remove it "
+                    "by hand with /plugin"
+                )
+        except (OSError, subprocess.SubprocessError) as e:
+            report.notes.append(
+                f"plugins: could not run the CLI to remove stale marketplace "
+                f"'{mkt_name}' ({e}); remove it by hand with /plugin"
+            )
     for pid, rec in sorted(old_records.items()):
         if pid in records:
             continue
@@ -1311,6 +1349,13 @@ def cmd_render(args: argparse.Namespace) -> int:
         settings = json.loads(settings_path.read_text()) if settings_path.is_file() else {}
     except json.JSONDecodeError as e:
         print(f"ERROR: {settings_path} is not valid JSON ({e}); refusing to touch it.", file=sys.stderr)
+        return 1
+    if not isinstance(settings, dict):
+        print(
+            f"ERROR: {settings_path} is valid JSON but not an object; refusing "
+            "to touch it (checked before any plugin side effect).",
+            file=sys.stderr,
+        )
         return 1
     sidecar = json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
 

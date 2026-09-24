@@ -185,6 +185,14 @@ class TestPlugins(OpencodeCase):
         self.assertEqual(rc, 0)
         self.assertEqual(self.config()["plugin"], ["@vendor/theirs"])
 
+    def test_non_object_config_is_declined_loudly(self):
+        self.write_profile()
+        write(self.opencode / "opencode.json", "[]")
+        rc, _ = self.render()
+        self.assertEqual(rc, 1)
+        self.assertFalse(self.store.exists())
+        self.assertEqual((self.opencode / "opencode.json").read_text(), "[]")
+
     def test_jsonc_with_comments_is_declined_loudly(self):
         self.write_profile()
         write(

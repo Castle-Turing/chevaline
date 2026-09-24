@@ -471,6 +471,16 @@ def cmd_render(args: argparse.Namespace) -> int:
         try:
             config = json.loads(cfg_path.read_text())
         except json.JSONDecodeError:
+            config = None  # handled below with the same decline
+        if config is not None and not isinstance(config, dict):
+            print(
+                f"ERROR: {cfg_path} is valid JSON but not an object; rewriting "
+                "it would clobber what the resident wrote, so this adapter "
+                "declines to touch it (SPEC §4 item 3).",
+                file=sys.stderr,
+            )
+            return 1
+        if config is None:
             print(
                 f"ERROR: {cfg_path} is not plain JSON (comments?). Rewriting it "
                 "would destroy what the resident wrote, so this adapter declines "
