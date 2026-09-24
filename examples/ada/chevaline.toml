@@ -1,5 +1,5 @@
 # Ada's Chevaline profile — a fictional reference example.
-# Exercises every section of SPEC.md §3 (3.1 through 3.10).
+# Exercises every section of SPEC.md §3 (3.1 through 3.11).
 
 spec = "0.3"
 
@@ -92,3 +92,14 @@ default = "reported"
 id = "orchestrator"
 run = "scripts/orchestrate.py"
 description = "Fan out a task across several agent sessions"
+
+# A harness plugin Ada wants in every harness that can carry it (SPEC
+# §3.11). Pinned to a commit: a plugin executes code inside every session,
+# so updates are deliberate profile commits, not a tracked branch. With
+# `exec.install = "approval"` above, adapters will not fetch this without
+# an explicit go (--allow-install), per SPEC §4.2.
+[[plugins]]
+id = "ponytail"
+source = "https://github.com/dietrichgebert/ponytail"
+pin = "e3ba2aa6f1e6f0bc4d69eb09c9f0d0a93af56156"
+compose = "layer"

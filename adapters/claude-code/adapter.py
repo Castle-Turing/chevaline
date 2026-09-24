@@ -42,6 +42,8 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -49,6 +51,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 
 import chevaline as ch  # noqa: E402
+import plugstore  # noqa: E402
 
 HARNESS_NAME = "claude-code"
 
@@ -607,6 +610,7 @@ def apply_settings(
     list_entries: dict[str, list[str]],
     scalars: dict[str, Any],
     report: Report,
+    plugin_records: dict[str, dict] | None = None,
 ) -> tuple[dict, dict]:
     """Pure function from (current settings, current sidecar, desires) to
     (new settings, new sidecar). Ownership rules in the module docstring."""
@@ -655,6 +659,7 @@ def apply_settings(
                     parent = parent.get(part, {})
                 if isinstance(parent, dict):
                     parent.pop(parts[-1], None)
+                delete_path_if_empty(settings, ".".join(parts[:-1]) or path)
                 report.rendered.append(f"settings.json {path}: removed (no longer in profile)")
             continue
         desired = scalars[path]
@@ -688,7 +693,241 @@ def apply_settings(
             "listEntries": {k: v for k, v in sorted(new_list_owned.items())},
         },
     }
+    if plugin_records:
+        new_sidecar["plugins"] = {k: v for k, v in sorted(plugin_records.items())}
     return settings, new_sidecar
+
+
+# --------------------------------------------------------------------------
+# Plugins (SPEC §3.11, §4.2)
+#
+# The claude-code surfaces used are the documented ones only: the plugin
+# store checkout is registered as a local marketplace through the stable
+# `claude plugin marketplace add` CLI (registration has no documented file
+# surface), and enablement is the documented `enabledPlugins` settings key,
+# written and owned through the same sidecar machinery as every other
+# scalar. The internal `~/.claude/plugins/` state files are never touched.
+#
+# Materializing a checkout is an `exec.install`-class action (§4.2): at
+# `approval` — including the unresolved case — nothing is fetched unless
+# the resident passed --allow-install for this invocation; at `reported`
+# the fetch happens and the report says so; at `silent` it just happens.
+# --------------------------------------------------------------------------
+
+
+def applicable_plugins(effective: dict) -> list[dict]:
+    out = []
+    for entry in effective.get("plugins", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        harnesses = entry.get("harnesses")
+        if harnesses is None or HARNESS_NAME in harnesses:
+            out.append(entry)
+    return out
+
+
+def install_authority(effective: dict) -> str:
+    """The resolved authority level for exec.install. Unresolved — no
+    action entry and no default — behaves as `approval` (SPEC §4.2)."""
+    auth = effective.get("authority", {})
+    if not isinstance(auth, dict):
+        return "approval"
+    actions = auth.get("actions", {})
+    level = actions.get("exec.install") if isinstance(actions, dict) else None
+    if level is None:
+        level = auth.get("default")
+    return level if level in ("silent", "reported", "approval") else "approval"
+
+
+def run_claude_cli(cli: str, claude_dir: Path, cli_args: list[str]) -> subprocess.CompletedProcess:
+    """Runs the documented `claude plugin ...` CLI against the render's
+    target config dir. CLAUDE_CONFIG_DIR keeps the CLI's writes and this
+    adapter's file writes pointed at the same directory."""
+    env = dict(os.environ)
+    env["CLAUDE_CONFIG_DIR"] = str(claude_dir)
+    return subprocess.run(
+        [cli, *cli_args], capture_output=True, text=True, env=env, timeout=120
+    )
+
+
+def render_plugins(
+    effective: dict,
+    args: argparse.Namespace,
+    claude_dir: Path,
+    old_sidecar: dict,
+    report: Report,
+) -> tuple[dict[str, Any], dict[str, dict], list[str]]:
+    """Returns (extra_scalars for settings.json, sidecar plugin records,
+    errors). Runs the store materialization and marketplace registration —
+    except under --dry-run, which only reports what would happen."""
+    scalars: dict[str, Any] = {}
+    records: dict[str, dict] = {}
+    errors: list[str] = []
+
+    declared = effective.get("plugins", []) or []
+    plugins = applicable_plugins(effective)
+    filtered = len(declared) - len(plugins)
+    if filtered:
+        report.notes.append(
+            f"plugins: {filtered} entr{'y' if filtered == 1 else 'ies'} filtered out by a "
+            f"`harnesses` key not naming {HARNESS_NAME}"
+        )
+    old_records: dict[str, dict] = (old_sidecar.get("plugins") or {})
+
+    level = install_authority(effective)
+    store = Path(args.plugin_store).expanduser() if args.plugin_store else plugstore.default_store()
+
+    for entry in plugins:
+        pid, source, pin = entry["id"], entry["source"], entry["pin"]
+        checkout = plugstore.checkout_dir(store, pid, pin)
+        materialized = checkout.exists()
+
+        if not materialized and level == "approval" and not args.allow_install:
+            report.skipped.append(
+                f"plugins.{pid} — materializing {source} at {pin[:12]} is an "
+                "exec.install-class action and the resolved authority is "
+                "'approval' (or unresolved, which behaves the same, SPEC §4.2); "
+                "re-run with --allow-install to authorize this invocation"
+            )
+            continue
+
+        if args.dry_run:
+            report.notes.append(
+                f"plugins.{pid}: DRY RUN — would "
+                + ("use the existing checkout at " if materialized else "materialize into ")
+                + str(checkout)
+                + ", register it as a local marketplace via `claude plugin "
+                "marketplace add`, and enable it via the owned "
+                "`enabledPlugins` settings key"
+            )
+            continue
+
+        try:
+            checkout, fetched = plugstore.materialize(pid, source, pin, store)
+        except plugstore.PlugstoreError as e:
+            errors.append(f"plugins.{pid}: {e}")
+            continue
+        if fetched:
+            verb = {
+                "silent": "materialized",
+                "reported": "materialized (exec.install is 'reported': saying so)",
+                "approval": "materialized (exec.install is 'approval'; authorized by --allow-install)",
+            }[level]
+            report.rendered.append(f"plugins.{pid}: {verb} {source} @ {pin[:12]} → {checkout}")
+
+        mkt_path = checkout / ".claude-plugin" / "marketplace.json"
+        if not mkt_path.is_file():
+            report.skipped.append(
+                f"plugins.{pid} — the checkout has no .claude-plugin/marketplace.json, "
+                "so there is no claude-code packaging to register; the entry lists "
+                f"{HARNESS_NAME} (or lists no harnesses), which looks like a mismatch "
+                "with what the plugin repo actually ships (SPEC §4.2)"
+            )
+            continue
+        try:
+            mkt = json.loads(mkt_path.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            errors.append(f"plugins.{pid}: unreadable marketplace.json ({e})")
+            continue
+        mkt_name = mkt.get("name")
+        listed = any(
+            isinstance(p, dict) and p.get("name") == pid for p in mkt.get("plugins", [])
+        )
+        if not isinstance(mkt_name, str) or not listed:
+            report.skipped.append(
+                f"plugins.{pid} — the checkout's marketplace.json does not list a "
+                f"plugin named '{pid}' (marketplace {mkt_name!r}); the profile id "
+                "must match the plugin's own name for the enablement key to mean "
+                "anything"
+            )
+            continue
+        identity = f"{pid}@{mkt_name}"
+        if "." in identity:
+            report.skipped.append(
+                f"plugins.{pid} — identity '{identity}' contains a dot, which this "
+                "adapter's dotted-path settings ownership cannot represent; not rendered"
+            )
+            continue
+
+        prior = old_records.get(pid)
+        if prior and prior.get("marketplace") == mkt_name and prior.get("pin") == pin:
+            report.notes.append(f"plugins.{pid}: already registered at this pin; no CLI call")
+        else:
+            if prior and prior.get("marketplace") and prior.get("pin") != pin:
+                removal = run_claude_cli(
+                    args.claude_cli, claude_dir,
+                    ["plugin", "marketplace", "remove", prior["marketplace"]],
+                )
+                if removal.returncode != 0:
+                    report.notes.append(
+                        f"plugins.{pid}: could not remove the old marketplace "
+                        f"registration before re-pinning ({(removal.stderr or removal.stdout).strip()}); "
+                        "continuing with the add"
+                    )
+            try:
+                added = run_claude_cli(
+                    args.claude_cli, claude_dir,
+                    ["plugin", "marketplace", "add", str(checkout)],
+                )
+            except (OSError, subprocess.SubprocessError) as e:
+                errors.append(
+                    f"plugins.{pid}: could not run the `{args.claude_cli}` CLI ({e}) — "
+                    "marketplace registration has no documented file surface, so this "
+                    "adapter cannot register the plugin without it"
+                )
+                continue
+            output = ((added.stderr or "") + (added.stdout or "")).lower()
+            if added.returncode != 0 and "already" not in output:
+                errors.append(
+                    f"plugins.{pid}: `claude plugin marketplace add {checkout}` failed: "
+                    f"{(added.stderr or added.stdout).strip()}"
+                )
+                continue
+            report.rendered.append(
+                f"plugins.{pid}: registered local marketplace '{mkt_name}' → {checkout}"
+            )
+
+        scalars[f"enabledPlugins.{identity}"] = True
+        records[pid] = {
+            "identity": identity,
+            "marketplace": mkt_name,
+            "checkout": str(checkout),
+            "pin": pin,
+            "source": source,
+        }
+
+    # Plugins the profile no longer declares (or no longer aims at this
+    # harness): their enabledPlugins scalar un-renders through the ordinary
+    # scalar-ownership path; the marketplace registration is removed here.
+    live_marketplaces = {r["marketplace"] for r in records.values()}
+    for pid, rec in sorted(old_records.items()):
+        if pid in records:
+            continue
+        if args.dry_run:
+            report.notes.append(f"plugins.{pid}: DRY RUN — would remove (no longer in profile)")
+            records[pid] = rec  # keep the record; nothing was actually removed
+            continue
+        mkt_name = rec.get("marketplace")
+        if mkt_name and mkt_name not in live_marketplaces:
+            try:
+                removal = run_claude_cli(
+                    args.claude_cli, claude_dir,
+                    ["plugin", "marketplace", "remove", mkt_name],
+                )
+                if removal.returncode != 0:
+                    report.notes.append(
+                        f"plugins.{pid}: `claude plugin marketplace remove {mkt_name}` "
+                        f"failed ({(removal.stderr or removal.stdout).strip()}); remove it "
+                        "by hand with /plugin"
+                    )
+            except (OSError, subprocess.SubprocessError) as e:
+                report.notes.append(
+                    f"plugins.{pid}: could not run the CLI to remove marketplace "
+                    f"'{mkt_name}' ({e}); remove it by hand with /plugin"
+                )
+        report.rendered.append(f"plugins.{pid}: removed (no longer in profile)")
+
+    return scalars, records, errors
 
 
 # --------------------------------------------------------------------------
@@ -821,34 +1060,48 @@ def cmd_render(args: argparse.Namespace) -> int:
     else:
         report.notes.append(f"{md_path}: already up to date")
 
-    # settings.json + sidecar
+    # settings.json + sidecar. The sidecar is read before the plugins phase
+    # because plugin idempotence and un-render both consult its records.
     settings_path = claude_dir / "settings.json"
     sidecar_path = claude_dir / SIDECAR_NAME
+    sidecar = json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
+
+    # Plugins run before settings.json is read: the marketplace CLI they
+    # invoke owns state of its own, and reading settings only after every
+    # external command has run means nothing here writes from a stale view.
+    plugin_scalars, plugin_records, plugin_errors = render_plugins(
+        effective, args, claude_dir, sidecar, report
+    )
+
     try:
         settings = json.loads(settings_path.read_text()) if settings_path.is_file() else {}
     except json.JSONDecodeError as e:
         print(f"ERROR: {settings_path} is not valid JSON ({e}); refusing to touch it.", file=sys.stderr)
         return 1
-    sidecar = json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
 
     list_entries, scalars = desired_settings(effective, report)
-    new_settings, new_sidecar = apply_settings(settings, sidecar, list_entries, scalars, report)
+    scalars.update(plugin_scalars)
+    new_settings, new_sidecar = apply_settings(
+        settings, sidecar, list_entries, scalars, report, plugin_records
+    )
 
     report_unrenderable(effective, explain, report)
+    for e in plugin_errors:
+        report.unenforced.append(f"PLUGIN ERROR: {e}")
 
     if args.dry_run:
         report.notes.append("DRY RUN: nothing was written.")
         report.print()
-        return 0
+        return 1 if plugin_errors else 0
 
     claude_dir.mkdir(parents=True, exist_ok=True)
     if new_md != (existing_md or ""):
         md_path.write_text(new_md)
-    if new_settings != settings or not sidecar_path.is_file():
+    if new_settings != settings or new_sidecar != sidecar or not sidecar_path.is_file():
         settings_path.write_text(json.dumps(new_settings, indent=2) + "\n")
         sidecar_path.write_text(json.dumps(new_sidecar, indent=2) + "\n")
     report.print()
-    return 0
+    return 1 if plugin_errors else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -858,6 +1111,25 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("profile_dir", help="Path to the Chevaline profile directory")
     p.add_argument("--claude-dir", default="~/.claude", help="Claude Code config dir (default ~/.claude)")
     p.add_argument("--dry-run", action="store_true", help="Report without writing")
+    p.add_argument(
+        "--allow-install",
+        action="store_true",
+        help=(
+            "Authorize exec.install-class plugin materialization for this "
+            "invocation (SPEC §4.2) — required when the profile's resolved "
+            "authority for exec.install is 'approval' or unresolved"
+        ),
+    )
+    p.add_argument(
+        "--plugin-store",
+        default=None,
+        help="Override the plugin store directory (default: $XDG_DATA_HOME/chevaline/plugins)",
+    )
+    p.add_argument(
+        "--claude-cli",
+        default="claude",
+        help="The claude CLI to use for plugin marketplace registration (default: claude)",
+    )
     p.add_argument("--cwd", default=None, help="Context cwd for `path` selectors")
     p.add_argument("--hostname", default=None, help="Context hostname for `hostname` selectors")
     p.add_argument("--git-org", dest="git_org", default=None, help="Context git org for `git_org` selectors")

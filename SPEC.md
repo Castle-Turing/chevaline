@@ -120,7 +120,7 @@ the universal default and then applied to a setting where it is meaningless:
 
 | Preference shape | Sections | Valid modes | Default |
 |---|---|---|---|
-| Additive (a set of items) | `[[gates]]`, `[[extensions]]` | `layer`, `defer`, `insist` | `layer` |
+| Additive (a set of items) | `[[gates]]`, `[[extensions]]`, `[[plugins]]` | `layer`, `defer`, `insist` | `layer` |
 | Single-valued (one choice) | `[sessions]`, `[harnesses]`, `[models]` | `defer`, `insist` | `defer` |
 | Permission or limit | `[authority]` | `restrict` | `restrict`, not settable |
 
@@ -500,6 +500,44 @@ protocol is future work.
 > the invocation-protocol question rather than answering it. Not yet
 > redesigned; see `docs/standards.md`.
 
+### 3.11 Plugins
+
+A **harness plugin** bundles skills *plus lifecycle hooks plus per-harness
+packaging* in one repository, installed through each harness's own
+mechanism (a marketplace, a config entry, a hooks file). It is a distinct
+unit from an extension (§3.10): hooks are behavioral — they fire on
+lifecycle events without being invoked — where a skill loads on demand.
+RFC 0009 carries the argument.
+
+```toml
+[[plugins]]
+id = "ponytail"
+source = "https://github.com/dietrichgebert/ponytail"
+pin = "e3ba2aa6f1e6f0bc4d69eb09c9f0d0a93af56156"
+harnesses = ["claude-code", "opencode"]   # optional filter; default: all
+compose = "layer"                         # additive shape (§2.2)
+```
+
+- **`id`** — required; unique among the profile's plugins. Used as the
+  checkout's directory name in the plugin store.
+- **`source`** — required; where the plugin's repository lives: a git URL,
+  or a path (absolute, or profile-relative) for a local repository.
+- **`pin`** — required; the full 40-hex commit to materialize. There is no
+  way to express "track a branch", deliberately: a plugin executes code
+  inside every session, so updates are profile commits — auditable, and
+  attributable. A short or symbolic ref is a validation error.
+- **`harnesses`** — optional filter, same semantics as in §3.6.
+- **`compose`** — additive shape (§2.2): `layer` by default; a project
+  mandating its own plugins does not displace the resident's.
+
+**One pinned checkout serves every harness.** Adapters materialize
+`source` at `pin` into the **plugin store** —
+`$XDG_DATA_HOME/chevaline/plugins/<id>/<pin>` (default
+`~/.local/share/chevaline/plugins/...`) — at most once, and render each
+harness's native enablement against that checkout. The store is the one
+location outside harness config that this spec names; §4 item 6 carries
+the corresponding exception. Materialization obligations are in §4.2.
+
 ## 4. Adapter contract
 
 An adapter, given the path to a profile repo, MUST:
@@ -523,7 +561,9 @@ An adapter, given the path to a profile repo, MUST:
    carries one.
 5. **Report what it skipped.** A field the harness cannot express is
    dropped *visibly* (a rendering report), never silently.
-6. **Never write outside** the harness's own config locations.
+6. **Never write outside** the harness's own config locations — with one
+   named exception: the plugin store (§3.11), the single cross-harness
+   location this spec itself defines.
 
 ### 4.1 Budget enforcement
 
@@ -551,6 +591,33 @@ cap that silently fails to bind is worse than no cap at all.
   profile as enforced. Running uncapped while appearing capped is the
   failure mode this section exists to prevent.
 
+### 4.2 Plugin installation
+
+Rendering `[[plugins]]` is the one adapter duty that fetches remote
+content onto the machine, so it carries obligations the rest of §4 does
+not need:
+
+- **Materializing or re-pinning a checkout is an `exec.install`-class
+  action (§3.9).** An adapter MUST honor the resolved authority for
+  `exec.install`: at `approval`, it MUST NOT fetch without an explicit
+  per-invocation authorization (a flag, or an interactive confirmation);
+  at `reported`, it fetches and says so in the render report; at
+  `silent`, it fetches. Where the profile resolves no level for
+  `exec.install` — no action entry and no `default` — the adapter MUST
+  behave as if it were `approval`.
+- **Verify the pin.** After materializing, the checkout's HEAD MUST equal
+  the declared `pin`; a mismatch is an error, not a warning, and the
+  checkout MUST NOT be used.
+- **Materialization is idempotent.** A store entry already at the pin is
+  used as is, with no network access.
+- **Native enablement uses documented surfaces only.** An adapter enables
+  the plugin through mechanisms its harness documents (a settings key, a
+  config entry, a stable CLI). Internal state files are not a rendering
+  target, however convenient.
+- **Report the unexpressible.** A harness with no plugin surface, and a
+  listed harness for which the checkout carries no packaging, are both
+  reported per item 5 — never silently skipped.
+
 ## 5. Open questions (tracked, not resolved in v0.3)
 
 Substantive proposals now live as RFCs in [`docs/rfcs/`](docs/rfcs/), so
@@ -570,7 +637,12 @@ current thinking.
 | [0006](docs/rfcs/0006-profile-privacy.md) | §3.2's "public by convention" |
 | [0007](docs/rfcs/0007-extensions-and-skills.md) | §3.10 — duplicates Agent Skills; workflow stays unmodeled |
 | [0008](docs/rfcs/0008-effective-configuration.md) | §2, §4 — names the output of resolution |
-| [0009](docs/rfcs/0009-harness-plugins.md) | §3.10, §4 — a harness plugin (skills plus hooks plus per-harness packaging) is a third unit RFC 0007's skills do not cover; installing one would have adapters fetching remote content |
+
+[RFC 0009](docs/rfcs/0009-harness-plugins.md) (harness plugins) is
+Accepted and normative here as §3.11 and §4.2; its residual open
+questions — the store location's permanence, update cadence,
+availability probing, and the `[[extensions]]`/`[[plugins]]` naming
+pass — stay tracked in the RFC.
 
 **Still open, with no proposal yet:**
 

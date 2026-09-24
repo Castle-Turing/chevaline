@@ -1,6 +1,10 @@
 # RFC 0009 — Harness plugins as a declared unit
 
-- **Status:** Draft
+- **Status:** Accepted — 2026-09-24, resident direction to implement;
+  landed as SPEC §3.11 and §4.2 alongside this RFC. The implementation
+  answers the store-location open question interimly (XDG data dir,
+  `$XDG_DATA_HOME/chevaline/plugins/<id>/<pin>`); that and the other
+  open questions below remain open pending the evidence run.
 - **Raised:** 2026-09-23, from a resident trying to install one plugin
   (ponytail) across every harness they use
 - **Affects:** SPEC §3.10, §4, §5; relates to RFC 0007
