@@ -1089,9 +1089,11 @@ def render_plugins(
                 f"plugins.{pid}: marketplace '{mkt_name}' already registered "
                 "this render; reusing it"
             )
-        elif up_to_date:
-            session_registered[mkt_name] = (str(checkout), pin)
-            report.notes.append(f"plugins.{pid}: already registered at this pin; no CLI call")
+        elif args.dry_run and up_to_date:
+            report.notes.append(
+                f"plugins.{pid}: registration recorded; a real render verifies "
+                "it against the CLI"
+            )
         elif args.dry_run:
             report.notes.append(
                 f"plugins.{pid}: DRY RUN — would register local marketplace "
@@ -1105,7 +1107,10 @@ def render_plugins(
                 # claim the name; a prior registration under a DIFFERENT
                 # name may still be needed by another entry, so its removal
                 # is deferred until every desired registration is known.
-                if prior and prior.get("marketplace") == mkt_name:
+                prior_changed = prior is not None and (
+                    prior.get("pin") != pin or prior.get("checkout") != str(checkout)
+                )
+                if prior and prior.get("marketplace") == mkt_name and prior_changed:
                     removal = run_claude_cli(
                         args.claude_cli, claude_dir,
                         ["plugin", "marketplace", "remove", prior["marketplace"]],
@@ -1130,19 +1135,32 @@ def render_plugins(
                 )
                 continue
             output = ((added.stderr or "") + (added.stdout or "")).lower()
+            if added.returncode == 0 and up_to_date:
+                report.notes.append(
+                    f"plugins.{pid}: registration was missing and has been restored"
+                )
             if added.returncode != 0:
                 # "Already exists" is only success if the existing
                 # registration is the one this adapter recorded for this
-                # exact checkout. A same-named marketplace the resident
-                # registered by hand — or a stale one left by a failed
-                # re-pin removal — must surface as a conflict, not be
-                # silently adopted (and later removed) as ours.
+                # exact checkout — for an unchanged prior, that answer IS
+                # the per-render verification succeeding. A same-named
+                # marketplace the resident registered by hand — or a stale
+                # one left by a failed re-pin removal — must surface as a
+                # conflict, not be silently adopted (and later removed) as
+                # ours. A registration the resident repointed by hand
+                # cannot be distinguished through documented surfaces; the
+                # resident's own /plugin action stands, per hand-written-
+                # wins.
                 ours_already = (
                     "already" in output
                     and prior is not None
                     and prior.get("marketplace") == mkt_name
                     and prior.get("checkout") == str(checkout)
                 )
+                if ours_already:
+                    report.notes.append(
+                        f"plugins.{pid}: registration verified present"
+                    )
                 if not ours_already:
                     errors.append(
                         f"plugins.{pid}: `claude plugin marketplace add {checkout}` "
@@ -1157,9 +1175,10 @@ def render_plugins(
                     )
                     continue
             session_registered[mkt_name] = (str(checkout), pin)
-            report.rendered.append(
-                f"plugins.{pid}: registered local marketplace '{mkt_name}' → {checkout}"
-            )
+            if not up_to_date:
+                report.rendered.append(
+                    f"plugins.{pid}: registered local marketplace '{mkt_name}' → {checkout}"
+                )
 
         identities.append(identity)
         records[pid] = {

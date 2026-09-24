@@ -356,9 +356,11 @@ def validate_plugins_array(group: dict, ctx_prefix: str, errors: list[str]) -> N
         pin = entry.get("pin")
         if not isinstance(pin, str) or not PLUGIN_PIN.match(pin):
             errors.append(
-                f"{ctx}.pin must be a full 40-hex commit (SPEC §3.11: nothing "
-                f"shorter or symbolic — a plugin executes code inside every "
-                f"session), got {pin!r}"
+                f"{ctx}.pin must be a full 40-hex commit in lowercase "
+                f"(SPEC §3.11: nothing shorter or symbolic — a plugin executes "
+                f"code inside every session; git prints object ids lowercase "
+                f"and this spec requires that spelling so no layer has to "
+                f"normalize), got {pin!r}"
             )
         harnesses = entry.get("harnesses")
         if harnesses is not None and (

@@ -754,16 +754,37 @@ class TestPluginRender(PluginCase):
         self.assertIn(str(self.store / "pony" / self.pin), md)
         self.assertIn("SDK sessions", md)
 
-    def test_second_render_is_idempotent_and_calls_no_cli(self):
+    def test_second_render_is_byte_idempotent_and_verifies_registration(self):
         self.write_profile(install_level="silent")
         self.render()
         first_settings = (self.claude / "settings.json").read_bytes()
         calls_before = self.cli_calls()
         rc, out = self.render()
         self.assertEqual(rc, 0, out)
-        self.assertEqual(self.cli_calls(), calls_before)
+        # The registration is re-verified through the CLI each render (a
+        # stale sidecar must not stand in for actual native state), so one
+        # more `add` lands; the stub answers 0, which real Claude gives
+        # only when the registration was missing — hence "restored".
+        self.assertEqual(len(self.cli_calls()), len(calls_before) + 1)
         self.assertEqual((self.claude / "settings.json").read_bytes(), first_settings)
-        self.assertIn("already registered at this pin", out)
+        self.assertIn("restored", out)
+
+    def test_verification_accepts_already_exists_for_our_registration(self):
+        self.write_profile(install_level="silent")
+        self.render()
+        # Real Claude answers a re-add of a present registration with a
+        # nonzero "already exists"; for an unchanged prior that answer IS
+        # the verification succeeding.
+        self.cli.write_text(
+            "#!/bin/sh\n"
+            f'echo "$@" >> "{self.cli_log}"\n'
+            'echo "marketplace already exists" >&2\n'
+            "exit 1\n"
+        )
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("registration verified present", out)
+        self.assertIs(self.settings()["enabledPlugins"]["pony@pony"], True)
 
     def test_dropping_the_plugin_unrenders_and_removes_marketplace(self):
         self.write_profile(install_level="silent")

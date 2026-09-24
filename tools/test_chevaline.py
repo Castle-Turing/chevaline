@@ -800,6 +800,12 @@ class TestPluginsValidation(unittest.TestCase):
                 f"id {bad!r} was not rejected: {errors}",
             )
 
+    def test_uppercase_pin_is_rejected_with_the_lowercase_rule(self):
+        errors = self.errors_for(
+            f'id = "p"\nsource = "s"\npin = "{self.GOOD_PIN.upper()}"'
+        )
+        self.assertTrue(any("lowercase" in e for e in errors), errors)
+
     def test_harnesses_must_be_a_string_array(self):
         errors = self.errors_for(
             f'id = "p"\nsource = "s"\npin = "{self.GOOD_PIN}"\nharnesses = "claude-code"'

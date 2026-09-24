@@ -522,7 +522,9 @@ compose = "layer"                         # additive shape (§2.2)
   checkout's directory name in the plugin store.
 - **`source`** — required; where the plugin's repository lives: a git URL,
   or a path (absolute, or profile-relative) for a local repository.
-- **`pin`** — required; the full 40-hex commit to materialize. There is no
+- **`pin`** — required; the full 40-hex commit to materialize, in
+  lowercase — the spelling git itself prints — so no layer between the
+  manifest and the store ever has to normalize case. There is no
   way to express "track a branch", deliberately: a plugin executes code
   inside every session, so updates are profile commits — auditable, and
   attributable. A short or symbolic ref is a validation error.
