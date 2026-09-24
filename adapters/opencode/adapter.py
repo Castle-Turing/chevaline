@@ -205,6 +205,20 @@ def desired_plugin_entries(
 
     for entry in plugins:
         pid, pin = entry["id"], entry["pin"]
+        compose = entry.get("compose", "layer")
+        if compose != "layer":
+            # A config `plugin` entry is unconditional: it cannot express
+            # "only where the project has no plugin opinion" (defer) or
+            # "stop on a conflict" (insist), and project-opinion detection
+            # is out of scope for v0.3 (RFC 0005). Silently layering would
+            # override the declared mode.
+            report.skipped.append(
+                f"plugins.{pid} (compose={compose!r}) — a config plugin entry is "
+                "unconditional, and this adapter cannot detect a project's own "
+                "plugin opinion (RFC 0005), so a non-layer mode cannot be "
+                "honored natively; not rendered"
+            )
+            continue
         source = plugstore.resolve_source(entry["source"], profile_dir)
         checkout = plugstore.checkout_dir(store, pid, pin)
         materialized = checkout.exists()
@@ -237,17 +251,19 @@ def desired_plugin_entries(
                 }[level]
                 report.rendered.append(f"plugins.{pid}: {verb} {source} @ {pin[:12]} → {checkout}")
 
-        # OpenCode plugins are JavaScript or TypeScript entry points; .cjs
-        # helpers are deliberately excluded (they are modules the entry
-        # points require, not plugins of their own).
-        plugin_dir = checkout / ".opencode" / "plugins"
+        # OpenCode plugins are JavaScript or TypeScript entry points, and
+        # both documented directory spellings are honored — `plugin/` and
+        # `plugins/`. `.cjs` helpers are deliberately excluded (they are
+        # modules the entry points require, not plugins of their own).
         points: list[Path] = []
-        if plugin_dir.is_dir():
-            for pattern in ("*.mjs", "*.js", "*.ts"):
-                points.extend(plugin_dir.glob(pattern))
+        for dirname in ("plugin", "plugins"):
+            plugin_dir = checkout / ".opencode" / dirname
+            if plugin_dir.is_dir():
+                for pattern in ("*.mjs", "*.js", "*.ts"):
+                    points.extend(plugin_dir.glob(pattern))
         if not points:
             report.skipped.append(
-                f"plugins.{pid} — the checkout has no .opencode/plugins/*.mjs|js|ts "
+                f"plugins.{pid} — the checkout has no .opencode/plugin[s]/*.mjs|js|ts "
                 "entry point, so there is no OpenCode packaging to reference; the "
                 f"entry lists {HARNESS_NAME} (or lists no harnesses), which looks "
                 "like a mismatch with what the plugin repo actually ships (SPEC §4.2)"

@@ -617,6 +617,11 @@ not need:
 - **Report the unexpressible.** A harness with no plugin surface, and a
   listed harness for which the checkout carries no packaging, are both
   reported per item 5 — never silently skipped.
+- **Non-`layer` modes do not degrade to `layer`.** Native plugin
+  enablement is typically unconditional, and §2.2's project-opinion
+  detection is out of scope for v0.3 — so an adapter that cannot express
+  a `defer` or `insist` enablement natively MUST report the entry and
+  not enable it, rather than enabling it as if it were `layer`.
 
 ## 5. Open questions (tracked, not resolved in v0.3)
 

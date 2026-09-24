@@ -211,6 +211,34 @@ class TestPlugins(OpencodeCase):
             [str(base / "extra.ts"), str(base / "pony.js")],
         )
 
+    def test_singular_plugin_directory_is_recognized(self):
+        (self.plugin_repo / ".opencode" / "plugins" / "pony.mjs").unlink()
+        write(self.plugin_repo / ".opencode" / "plugin" / "pony.mjs", "// entry\n")
+        _git("add", "-A", cwd=self.plugin_repo)
+        _git("commit", "--quiet", "-m", "singular dir", cwd=self.plugin_repo)
+        self.pin = _git("rev-parse", "HEAD", cwd=self.plugin_repo)
+        self.write_profile()
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        entry = str(self.store / "pony" / self.pin / ".opencode" / "plugin" / "pony.mjs")
+        self.assertEqual(self.config()["plugin"], [entry])
+
+    def test_non_layer_compose_is_reported_not_layered(self):
+        self.write_profile(
+            plugins=(
+                "[[plugins]]\n"
+                'id = "pony"\n'
+                f'source = "{self.plugin_repo}"\n'
+                f'pin = "{self.pin}"\n'
+                'compose = "insist"\n'
+            ),
+        )
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("non-layer mode cannot be honored natively", out)
+        self.assertFalse(self.store.exists())
+        self.assertNotIn("plugin", self.config())
+
     def test_no_opencode_packaging_is_reported(self):
         (self.plugin_repo / ".opencode" / "plugins" / "pony.mjs").unlink()
         _git("add", "-A", cwd=self.plugin_repo)

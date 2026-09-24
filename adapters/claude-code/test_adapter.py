@@ -243,7 +243,7 @@ class TestBudgetProse(AdapterCase):
         self.assertFalse(errors)
         effective.pop("budget")
         raw.pop("budget")
-        region = adapter.render_region(effective, raw, self.profile, adapter.plugstore.default_store(), adapter.Report())
+        region = adapter.render_region(effective, raw, self.profile, adapter.Report())
         md_without = adapter.splice_claude_md(md_with, region)
         # Exactly the budget section is gone; every other byte survives.
         self.assertEqual(md_without, md_with.replace("\n" + section, "", 1))
@@ -844,6 +844,78 @@ class TestPluginRender(PluginCase):
         rc, out = self.render()
         self.assertEqual(rc, 0, out)
         self.assertTrue((self.store / "pony" / self.pin).is_dir())
+
+    def test_existing_store_entry_is_reverified_each_render(self):
+        self.write_profile(install_level="silent")
+        self.render()
+        checkout = self.store / "pony" / self.pin
+        (checkout / "tamper.txt").write_text("x\n")
+        _git("add", "-A", cwd=checkout)
+        _git("commit", "--quiet", "-m", "tamper", cwd=checkout)
+        rc, out = self.render()
+        self.assertEqual(rc, 1)
+        self.assertIn("PLUGIN ERROR", out)
+
+    def test_marketplace_source_outside_checkout_is_refused(self):
+        write(
+            self.plugin_repo / ".claude-plugin" / "marketplace.json",
+            json.dumps(
+                {"name": "pony", "plugins": [{"name": "pony", "source": "../../elsewhere"}]}
+            ),
+        )
+        _git("add", "-A", cwd=self.plugin_repo)
+        _git("commit", "--quiet", "-m", "outside source", cwd=self.plugin_repo)
+        self.pin = _git("rev-parse", "HEAD", cwd=self.plugin_repo)
+        self.write_profile(install_level="silent")
+        rc, out = self.render()
+        self.assertEqual(rc, 1)
+        self.assertIn("points outside the pinned checkout", out)
+        self.assertNotIn("enabledPlugins", self.settings())
+
+    def test_non_layer_compose_is_reported_not_layered(self):
+        self.write_profile(
+            install_level="silent",
+            plugins=(
+                "[[plugins]]\n"
+                'id = "pony"\n'
+                f'source = "{self.plugin_repo}"\n'
+                f'pin = "{self.pin}"\n'
+                'compose = "defer"\n'
+            ),
+        )
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("non-layer mode cannot be honored natively", out)
+        self.assertFalse(self.store.exists())
+        self.assertNotIn("enabledPlugins", self.settings())
+
+    def test_launcher_prose_omits_uninstalled_declarations(self):
+        self.write_profile(install_level="approval")
+        rc, _ = self.render()  # no --allow-install: skipped
+        self.assertEqual(rc, 0)
+        md = (self.claude / "CLAUDE.md").read_text()
+        self.assertIn("Declared but not installed by the last render", md)
+        self.assertNotIn("pinned checkout: `", md)
+
+    def test_malformed_settings_aborts_before_any_side_effect(self):
+        write(self.claude / "settings.json", "{not json")
+        self.write_profile(install_level="silent")
+        rc, _ = self.render()
+        self.assertEqual(rc, 1)
+        self.assertFalse(self.store.exists())
+        self.assertEqual(self.cli_calls(), [])
+
+    def test_store_move_reregisters_the_marketplace(self):
+        self.write_profile(install_level="silent")
+        self.render()
+        other_store = self.store.parent / "store2"
+        rc, out = self.render("--plugin-store", str(other_store))
+        self.assertEqual(rc, 0, out)
+        calls = self.cli_calls()
+        self.assertIn("plugin marketplace remove pony", calls)
+        self.assertEqual(calls[-1], f"plugin marketplace add {other_store / 'pony' / self.pin}")
+        side = self.sidecar()
+        self.assertEqual(side["plugins"]["pony"]["checkout"], str(other_store / "pony" / self.pin))
 
     def test_dry_run_touches_nothing(self):
         self.write_profile(install_level="silent")

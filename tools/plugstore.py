@@ -15,6 +15,7 @@ Standard library only.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,9 +28,9 @@ class PlugstoreError(RuntimeError):
 def resolve_source(source: str, profile_dir: Path) -> str:
     """A `source` may be a git URL or a path; a relative path is
     profile-relative (SPEC §3.11), never relative to wherever the adapter
-    process happens to be running. URLs and scp-style remotes pass through
-    untouched."""
-    if "://" in source or source.startswith("git@"):
+    process happens to be running. URLs and scp-style remotes
+    (`[user@]host:path`, any username) pass through untouched."""
+    if "://" in source or re.match(r"^[A-Za-z0-9._-]+@[^/:]+:", source):
         return source
     path = Path(source).expanduser()
     if not path.is_absolute():
