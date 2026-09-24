@@ -685,20 +685,30 @@ def apply_enabled_plugins(
     marketplace name may legitimately contain a dot. Mutates `settings`;
     returns the identities now owned."""
     owned_before: list[str] = (old_sidecar.get("owned") or {}).get("enabledPlugins", [])
-    table = settings.get("enabledPlugins")
-    table = dict(table) if isinstance(table, dict) else {}
+    existing = settings.get("enabledPlugins")
+    if existing is not None and not isinstance(existing, dict):
+        # A hand-written non-object value is a conflict, not raw material:
+        # replacing it would clobber state this adapter never owned.
+        report.conflicts.append(
+            f"settings.json enabledPlugins is {type(existing).__name__}-shaped, "
+            "not an object — hand-written config wins (SPEC §4 item 3); fix it "
+            "by hand and re-render to let the profile enable plugins"
+        )
+        return []
+    table = dict(existing) if isinstance(existing, dict) else {}
     new_owned: list[str] = []
     for ident in sorted(set(owned_before) | set(desired)):
+        present = ident in table
         current = table.get(ident)
         ours = ident in owned_before
         if ident not in desired:
-            if ours and ident in table:
+            if ours and present:
                 del table[ident]
                 report.rendered.append(
                     f"settings.json enabledPlugins[{ident!r}]: removed (no longer in profile)"
                 )
             continue
-        if current is not None and not ours:
+        if present and not ours:
             if current is True:
                 report.notes.append(
                     f"settings.json enabledPlugins[{ident!r}]: already enabled by "
@@ -899,7 +909,11 @@ def render_plugins(
     old_records: dict[str, dict] = (old_sidecar.get("plugins") or {})
 
     level = install_authority(effective)
-    store = Path(args.plugin_store).expanduser() if args.plugin_store else plugstore.default_store()
+    store = (
+        Path(args.plugin_store).expanduser().resolve()
+        if args.plugin_store
+        else plugstore.default_store()
+    )
 
     for entry in plugins:
         pid, pin = entry["id"], entry["pin"]
@@ -1004,8 +1018,11 @@ def render_plugins(
             and not Path(plugin_src).is_absolute()
         )
         if src_ok:
-            resolved = Path(os.path.normpath(checkout / plugin_src))
-            src_ok = resolved == checkout or resolved.is_relative_to(checkout)
+            # Real paths, not lexical ones: a tracked symlink can point
+            # outside the checkout while normpath stays inside it.
+            real_checkout = checkout.resolve()
+            resolved = (checkout / plugin_src).resolve()
+            src_ok = resolved == real_checkout or resolved.is_relative_to(real_checkout)
         if not src_ok:
             errors.append(
                 f"plugins.{pid}: the marketplace entry's source {plugin_src!r} "
@@ -1195,7 +1212,9 @@ def report_unrenderable(effective: dict, explain: dict, report: Report) -> None:
     # environment matching cannot leak into it. `gates` IS here: its
     # section renders from the resolved config (see gates_section), so an
     # environment that replaces the gates array leaks into global prose.
-    rendered_prefixes = ("instructions", "authority", "models", "resident", "gates")
+    rendered_prefixes = (
+        "instructions", "authority", "models", "resident", "gates", "plugins",
+    )
     contaminated = {
         env for path, env in explain.get("sources", {}).items()
         if path.startswith(rendered_prefixes)

@@ -845,6 +845,68 @@ class TestPluginRender(PluginCase):
         self.assertEqual(rc, 0, out)
         self.assertTrue((self.store / "pony" / self.pin).is_dir())
 
+    def test_environment_contributed_plugins_flag_a_context_dependent_render(self):
+        write(
+            self.profile / "chevaline.toml",
+            PLUGIN_PROFILE_TEMPLATE.format(install_level="silent", plugins="")
+            + "\n[[environment]]\n"
+            'name = "proj"\n'
+            'when = { path = "/pluginland*" }\n'
+            "\n"
+            "  [[environment.plugins]]\n"
+            '  id = "pony"\n'
+            f'  source = "{self.plugin_repo}"\n'
+            f'  pin = "{self.pin}"\n',
+        )
+        argv = [
+            "render", str(self.profile),
+            "--claude-dir", str(self.claude),
+            "--plugin-store", str(self.store),
+            "--claude-cli", str(self.cli),
+            "--cwd", "/pluginland/project",
+            "--hostname", "testhost",
+            "--git-org", "none",
+        ]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = adapter.main(argv)
+        out = buf.getvalue()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("CONTEXT-DEPENDENT RENDER", out)
+
+    def test_symlinked_marketplace_source_escaping_checkout_is_refused(self):
+        outside = self.plugin_repo.parent / "outside-target"
+        outside.mkdir()
+        (self.plugin_repo / "link").symlink_to("../outside-target")
+        write(
+            self.plugin_repo / ".claude-plugin" / "marketplace.json",
+            json.dumps({"name": "pony", "plugins": [{"name": "pony", "source": "./link"}]}),
+        )
+        _git("add", "-A", cwd=self.plugin_repo)
+        _git("commit", "--quiet", "-m", "symlink escape", cwd=self.plugin_repo)
+        self.pin = _git("rev-parse", "HEAD", cwd=self.plugin_repo)
+        self.write_profile(install_level="silent")
+        rc, out = self.render()
+        self.assertEqual(rc, 1)
+        self.assertIn("points outside the pinned checkout", out)
+
+    def test_hand_written_null_enablement_is_a_conflict_not_raw_material(self):
+        write(self.claude / "settings.json", json.dumps({"enabledPlugins": {"pony@pony": None}}))
+        self.write_profile(install_level="silent")
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        self.assertIsNone(self.settings()["enabledPlugins"]["pony@pony"])
+        self.assertNotIn("pony@pony", self.sidecar()["owned"].get("enabledPlugins", []))
+        self.assertIn("hand-written config wins", out)
+
+    def test_non_object_enabled_plugins_table_is_left_alone(self):
+        write(self.claude / "settings.json", json.dumps({"enabledPlugins": ["weird"]}))
+        self.write_profile(install_level="silent")
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.settings()["enabledPlugins"], ["weird"])
+        self.assertIn("-shaped, not an object", out)
+
     def test_dotted_marketplace_identity_is_enabled_literally(self):
         write(
             self.plugin_repo / ".claude-plugin" / "marketplace.json",

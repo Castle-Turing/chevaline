@@ -211,6 +211,21 @@ class TestPlugins(OpencodeCase):
             [str(base / "extra.ts"), str(base / "pony.js")],
         )
 
+    def test_relative_store_override_still_writes_absolute_entries(self):
+        import os
+
+        self.write_profile()
+        before = os.getcwd()
+        os.chdir(self.tmp.name)
+        try:
+            rc, out = self.render("--plugin-store", "rel-store")
+        finally:
+            os.chdir(before)
+        self.assertEqual(rc, 0, out)
+        entry = self.config()["plugin"][0]
+        self.assertTrue(Path(entry).is_absolute(), entry)
+        self.assertTrue(entry.startswith(self.tmp.name), entry)
+
     def test_singular_plugin_directory_is_recognized(self):
         (self.plugin_repo / ".opencode" / "plugins" / "pony.mjs").unlink()
         write(self.plugin_repo / ".opencode" / "plugin" / "pony.mjs", "// entry\n")

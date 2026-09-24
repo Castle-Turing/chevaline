@@ -201,7 +201,11 @@ def desired_plugin_entries(
             f"`harnesses` key not naming {HARNESS_NAME}"
         )
     level = install_authority(effective)
-    store = Path(args.plugin_store).expanduser() if args.plugin_store else plugstore.default_store()
+    store = (
+        Path(args.plugin_store).expanduser().resolve()
+        if args.plugin_store
+        else plugstore.default_store()
+    )
 
     for entry in plugins:
         pid, pin = entry["id"], entry["pin"]
