@@ -570,6 +570,7 @@ current thinking.
 | [0006](docs/rfcs/0006-profile-privacy.md) | §3.2's "public by convention" |
 | [0007](docs/rfcs/0007-extensions-and-skills.md) | §3.10 — duplicates Agent Skills; workflow stays unmodeled |
 | [0008](docs/rfcs/0008-effective-configuration.md) | §2, §4 — names the output of resolution |
+| [0009](docs/rfcs/0009-harness-plugins.md) | §3.10, §4 — a harness plugin (skills plus hooks plus per-harness packaging) is a third unit RFC 0007's skills do not cover; installing one would have adapters fetching remote content |
 
 **Still open, with no proposal yet:**
 
