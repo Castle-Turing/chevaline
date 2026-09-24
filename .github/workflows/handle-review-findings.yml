@@ -75,6 +75,11 @@ jobs:
       github.event.issue.pull_request &&
       contains(github.event.comment.body, '<!-- chevaline-gate: cross-vendor-review -->')
     runs-on: ubuntu-latest
+    env:
+      # The secrets context is not available inside `if:` expressions, so
+      # the mint step's condition tests this env value instead — env CAN
+      # be built from secrets, and the env context IS available to `if:`.
+      HAS_REVIEW_BOT_APP_KEY: ${{ secrets.REVIEW_BOT_APP_KEY != '' }}
     permissions:
       contents: write
       pull-requests: write
@@ -141,8 +146,9 @@ jobs:
         # variables and org secrets have independent repository access
         # policies, and minting with the client id alone fails the job
         # before checkout instead of falling through to the PAT/default
-        # token chain below.
-        if: steps.pr.outputs.eligible == 'true' && vars.REVIEW_BOT_APP_CLIENT_ID != '' && secrets.REVIEW_BOT_APP_KEY != ''
+        # token chain below. The key's presence is tested via the job env
+        # above, because `if:` cannot read the secrets context directly.
+        if: steps.pr.outputs.eligible == 'true' && vars.REVIEW_BOT_APP_CLIENT_ID != '' && env.HAS_REVIEW_BOT_APP_KEY == 'true'
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ vars.REVIEW_BOT_APP_CLIENT_ID }}
