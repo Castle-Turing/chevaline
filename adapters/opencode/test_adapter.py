@@ -185,6 +185,20 @@ class TestPlugins(OpencodeCase):
         self.assertEqual(rc, 0)
         self.assertEqual(self.config()["plugin"], ["@vendor/theirs"])
 
+    def test_config_target_stays_put_when_jsonc_appears_later(self):
+        self.write_profile()
+        self.render()  # writes opencode.json and records it as the target
+        write(self.opencode / "opencode.jsonc", "{}")
+        self.write_profile(plugins="")
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("config target stays opencode.json", out)
+        # The owned entry was removed from the file it was written to.
+        self.assertNotIn("plugin", self.config())
+        self.assertEqual(
+            json.loads((self.opencode / "opencode.jsonc").read_text()), {}
+        )
+
     def test_non_object_config_is_declined_loudly(self):
         self.write_profile()
         write(self.opencode / "opencode.json", "[]")

@@ -796,6 +796,28 @@ class TestPluginRender(PluginCase):
         self.assertNotIn("plugins", self.sidecar())
         self.assertIn("plugin marketplace remove pony", self.cli_calls())
 
+    def test_failed_marketplace_removal_is_retried_next_render(self):
+        self.write_profile(install_level="silent")
+        self.render()
+        # Dropping the plugin while the CLI refuses the removal keeps the
+        # record flagged, so the next render retries instead of orphaning
+        # the adapter-owned marketplace forever.
+        self.cli.write_text(
+            "#!/bin/sh\n"
+            f'echo "$@" >> "{self.cli_log}"\n'
+            'case "$*" in *remove*) exit 1;; *) exit 0;; esac\n'
+        )
+        self.cli.chmod(self.cli.stat().st_mode | stat.S_IXUSR)
+        self.write_profile(install_level="silent", plugins="")
+        rc, out = self.render()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("retries", out)
+        self.assertTrue(self.sidecar()["plugins"]["pony"]["pendingRemoval"])
+        removes_before = [c for c in self.cli_calls() if "remove" in c]
+        rc, _ = self.render()
+        removes_after = [c for c in self.cli_calls() if "remove" in c]
+        self.assertGreater(len(removes_after), len(removes_before))
+
     def test_missing_claude_packaging_is_reported_not_guessed(self):
         # A source with no .claude-plugin/marketplace.json: nothing to register.
         for path in [".claude-plugin/marketplace.json"]:

@@ -99,13 +99,13 @@ ARRAY_OF_TABLES_KEYS = {"instructions", "gates", "extensions", "plugins"}
 # SPEC §3.11: a plugin's `pin` is the full 40-hex commit, nothing shorter
 # or symbolic — a short sha can go ambiguous and a ref can move, and a
 # plugin executes code inside every session.
-PLUGIN_PIN = re.compile(r"^[0-9a-f]{40}$")
+PLUGIN_PIN = re.compile(r"^[0-9a-f]{40}\Z")
 
 # A plugin `id` is a single path component: it names the checkout's
 # directory inside the plugin store, so separators, dot components, and
 # anything absolute would let a profile escape the store. Must start with
 # an alphanumeric, which also rules out "." and "..".
-PLUGIN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+PLUGIN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
 # --------------------------------------------------------------------------

@@ -800,6 +800,16 @@ class TestPluginsValidation(unittest.TestCase):
                 f"id {bad!r} was not rejected: {errors}",
             )
 
+    def test_trailing_newline_in_pin_or_id_is_rejected(self):
+        errors = self.errors_for(
+            f'id = "p"\nsource = "s"\npin = """{self.GOOD_PIN}\n"""'
+        )
+        self.assertTrue(any(".pin" in e for e in errors), errors)
+        errors = self.errors_for(
+            f'id = """p\n"""\nsource = "s"\npin = "{self.GOOD_PIN}"'
+        )
+        self.assertTrue(any("single path component" in e for e in errors), errors)
+
     def test_uppercase_pin_is_rejected_with_the_lowercase_rule(self):
         errors = self.errors_for(
             f'id = "p"\nsource = "s"\npin = "{self.GOOD_PIN.upper()}"'

@@ -1198,7 +1198,9 @@ def render_plugins(
     # harness): their enabledPlugins entry un-renders through the ordinary
     # ownership path; the marketplace registration is removed here. Stale
     # names from re-registrations join the same still-in-use check.
-    live_marketplaces = {r["marketplace"] for r in records.values()}
+    live_marketplaces = {
+        r["marketplace"] for r in records.values() if not r.get("pendingRemoval")
+    }
     for mkt_name in sorted(set(stale_marketplaces)):
         if mkt_name in live_marketplaces or args.dry_run:
             continue
@@ -1226,23 +1228,32 @@ def render_plugins(
             records[pid] = rec  # keep the record; nothing was actually removed
             continue
         mkt_name = rec.get("marketplace")
+        removal_failed = False
         if mkt_name and mkt_name not in live_marketplaces:
             try:
                 removal = run_claude_cli(
                     args.claude_cli, claude_dir,
                     ["plugin", "marketplace", "remove", mkt_name],
                 )
-                if removal.returncode != 0:
+                removal_failed = removal.returncode != 0
+                if removal_failed:
                     report.notes.append(
                         f"plugins.{pid}: `claude plugin marketplace remove {mkt_name}` "
-                        f"failed ({(removal.stderr or removal.stdout).strip()}); remove it "
-                        "by hand with /plugin"
+                        f"failed ({(removal.stderr or removal.stdout).strip()}); the "
+                        "record is kept so the next render retries"
                     )
             except (OSError, subprocess.SubprocessError) as e:
+                removal_failed = True
                 report.notes.append(
                     f"plugins.{pid}: could not run the CLI to remove marketplace "
-                    f"'{mkt_name}' ({e}); remove it by hand with /plugin"
+                    f"'{mkt_name}' ({e}); the record is kept so the next render retries"
                 )
+        if removal_failed:
+            # Forgetting the record here would orphan an adapter-owned
+            # marketplace forever; keeping it flagged lets every later
+            # render retry, without counting it as live or enabling it.
+            records[pid] = {**rec, "pendingRemoval": True}
+            continue
         report.rendered.append(f"plugins.{pid}: removed (no longer in profile)")
 
     return identities, records, errors

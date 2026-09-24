@@ -324,7 +324,7 @@ def config_path(opencode_dir: Path) -> Path:
 
 
 def apply_config(
-    config: dict, sidecar: dict, wanted: list[str], report: Report
+    config: dict, sidecar: dict, wanted: list[str], target_name: str, report: Report
 ) -> tuple[dict, dict]:
     """Ownership model matches the claude-code adapter's list handling: the
     adapter removes only entries it previously owned, adds what the profile
@@ -344,6 +344,7 @@ def apply_config(
         new_sidecar = {
             "_comment": sidecar.get("_comment") or "",
             "owned": {"plugin": []},
+            "target": target_name,
         }
         return config, new_sidecar
     current_list = list(current) if isinstance(current, list) else []
@@ -372,6 +373,7 @@ def apply_config(
             "recorded here instead. Do not edit; re-rendering rewrites it."
         ),
         "owned": {"plugin": added},
+        "target": target_name,
     }
     return config, new_sidecar
 
@@ -464,9 +466,25 @@ def cmd_render(args: argparse.Namespace) -> int:
     else:
         report.notes.append(f"{md_path}: already up to date")
 
-    # opencode.json[c] plugin entries
-    cfg_path = config_path(opencode_dir)
+    # opencode.json[c] plugin entries. The sidecar is read first because it
+    # records which config file the owned entries were written to, and that
+    # target stays stable: if a render wrote opencode.json and a .jsonc
+    # later appears, switching targets would strand the owned entries in a
+    # file OpenCode still loads.
     sidecar_path = opencode_dir / SIDECAR_NAME
+    sidecar = json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
+    recorded_target = sidecar.get("target")
+    if isinstance(recorded_target, str) and (opencode_dir / recorded_target).is_file():
+        cfg_path = opencode_dir / recorded_target
+        preferred = config_path(opencode_dir)
+        if preferred != cfg_path:
+            report.notes.append(
+                f"config target stays {cfg_path.name}: the sidecar's owned "
+                f"entries live there, and {preferred.name} appearing later "
+                "does not move them"
+            )
+    else:
+        cfg_path = config_path(opencode_dir)
     if cfg_path.is_file():
         try:
             config = json.loads(cfg_path.read_text())
@@ -491,11 +509,10 @@ def cmd_render(args: argparse.Namespace) -> int:
             return 1
     else:
         config = {}
-    sidecar = json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
 
     prior_owned = (sidecar.get("owned") or {}).get("plugin", [])
     wanted = desired_plugin_entries(effective, args, profile_dir, prior_owned, report)
-    new_config, new_sidecar = apply_config(config, sidecar, wanted, report)
+    new_config, new_sidecar = apply_config(config, sidecar, wanted, cfg_path.name, report)
 
     report_unrenderable(effective, report)
 
