@@ -763,11 +763,11 @@ class TestPluginRender(PluginCase):
         self.assertEqual(rc, 0, out)
         # The registration is re-verified through the CLI each render (a
         # stale sidecar must not stand in for actual native state), so one
-        # more `add` lands; the stub answers 0, which real Claude gives
-        # only when the registration was missing — hence "restored".
+        # more `add` lands. The real CLI exits 0 for present AND restored
+        # registrations alike, so the note claims only "ensured".
         self.assertEqual(len(self.cli_calls()), len(calls_before) + 1)
         self.assertEqual((self.claude / "settings.json").read_bytes(), first_settings)
-        self.assertIn("restored", out)
+        self.assertIn("registration ensured", out)
 
     def test_verification_accepts_already_exists_for_our_registration(self):
         self.write_profile(install_level="silent")

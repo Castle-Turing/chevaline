@@ -1136,8 +1136,13 @@ def render_plugins(
                 continue
             output = ((added.stderr or "") + (added.stdout or "")).lower()
             if added.returncode == 0 and up_to_date:
+                # Observed against the real CLI: re-adding a present local
+                # marketplace also exits 0, so success does not distinguish
+                # "was present" from "was missing and is now restored" —
+                # the note claims only what the exit code proves.
                 report.notes.append(
-                    f"plugins.{pid}: registration was missing and has been restored"
+                    f"plugins.{pid}: registration ensured via the CLI (present "
+                    "and restored are indistinguishable from its success)"
                 )
             if added.returncode != 0:
                 # "Already exists" is only success if the existing
