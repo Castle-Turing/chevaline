@@ -243,7 +243,7 @@ class TestBudgetProse(AdapterCase):
         self.assertFalse(errors)
         effective.pop("budget")
         raw.pop("budget")
-        region = adapter.render_region(effective, raw, self.profile, adapter.Report())
+        region = adapter.render_region(effective, raw, self.profile, adapter.plugstore.default_store(), adapter.Report())
         md_without = adapter.splice_claude_md(md_with, region)
         # Exactly the budget section is gone; every other byte survives.
         self.assertEqual(md_without, md_with.replace("\n" + section, "", 1))
@@ -744,6 +744,15 @@ class TestPluginRender(PluginCase):
         self.assertIn("enabledPlugins.pony@pony", side["owned"]["scalars"])
         self.assertEqual(side["plugins"]["pony"]["identity"], "pony@pony")
         self.assertEqual(side["plugins"]["pony"]["pin"], self.pin)
+
+    def test_launcher_directive_prose_renders(self):
+        self.write_profile(install_level="silent")
+        rc, _ = self.render()
+        self.assertEqual(rc, 0)
+        md = (self.claude / "CLAUDE.md").read_text()
+        self.assertIn("# Plugins (declared policy)", md)
+        self.assertIn(str(self.store / "pony" / self.pin), md)
+        self.assertIn("SDK sessions", md)
 
     def test_second_render_is_idempotent_and_calls_no_cli(self):
         self.write_profile(install_level="silent")

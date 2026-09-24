@@ -434,11 +434,44 @@ def gates_section(effective: dict, profile_dir: Path) -> str | None:
     return "\n".join(lines) + "\n"
 
 
-def render_region(effective: dict, raw: dict, profile_dir: Path, report: Report) -> str:
+def plugins_section(effective: dict, store: Path) -> str | None:
+    """The plugins prose for the CLAUDE.md region: declared plugins plus a
+    standing launcher directive (SPEC §3.11). A harness-level install never
+    reaches an SDK-driven session — the SDK loads plugins only through an
+    explicit per-invocation option — so the session reading this, in its
+    role as launcher of such tools, is the one place the declaration can
+    take effect there. Same statement-surface reasoning as budget and
+    gates, one section over."""
+    plugins = applicable_plugins(effective)
+    if not plugins:
+        return None
+    lines = [
+        "# Plugins (declared policy)\n",
+        "The profile declares harness plugins, installed from a pinned",
+        "checkout in the plugin store:\n",
+    ]
+    for entry in plugins:
+        checkout = plugstore.checkout_dir(store, entry["id"], entry["pin"])
+        lines.append(f"- `{entry['id']}` — pinned checkout: `{checkout}`")
+    lines.append(
+        "\nThis harness loads them through its own plugin config, but an\n"
+        "SDK-driven session does not: the Agent SDK loads plugins only\n"
+        "through an explicit per-invocation option. When launching a tool\n"
+        "that dispatches SDK sessions and accepts a plugin path (for\n"
+        "example an emcee `--plugin` flag or roster key, once present),\n"
+        "pass each checkout path above. If the option is left off, those\n"
+        "sessions run without the plugins this profile declares."
+    )
+    return "\n".join(lines) + "\n"
+
+
+def render_region(
+    effective: dict, raw: dict, profile_dir: Path, store: Path, report: Report
+) -> str:
     """The text between the markers: concatenated instructions, the
     reporting half of any `reported` authority classes, the declared
-    budget as launcher-directive prose, then `run`-carrying gates as
-    standing prose."""
+    budget as launcher-directive prose, `run`-carrying gates as standing
+    prose, then declared plugins with their own launcher directive."""
     parts: list[str] = []
     resident = effective.get("resident", {})
     name = resident.get("name") if isinstance(resident, dict) else None
@@ -482,6 +515,10 @@ def render_region(effective: dict, raw: dict, profile_dir: Path, report: Report)
         parts.append(section)
 
     section = gates_section(effective, profile_dir)
+    if section is not None:
+        parts.append(section)
+
+    section = plugins_section(effective, store)
     if section is not None:
         parts.append(section)
 
@@ -1047,7 +1084,8 @@ def cmd_render(args: argparse.Namespace) -> int:
     # resolve_profile strips [[environment]] out of `effective`, and the
     # declared overrides must appear regardless of what matched here.
     raw, _ = ch.load_manifest(profile_dir)
-    region = render_region(effective, raw or {}, profile_dir, report)
+    store = Path(args.plugin_store).expanduser() if args.plugin_store else plugstore.default_store()
+    region = render_region(effective, raw or {}, profile_dir, store, report)
     md_path = claude_dir / "CLAUDE.md"
     existing_md = md_path.read_text() if md_path.is_file() else None
     new_md = splice_claude_md(existing_md, region)
