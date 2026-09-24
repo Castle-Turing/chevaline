@@ -169,6 +169,7 @@ jobs:
       # bot user's, fetched rather than hardcoded so the template holds for
       # any app name.
       - name: Sign commits as the bot, not the operator
+        id: sign
         if: steps.bot.outputs.token != ''
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
@@ -178,6 +179,12 @@ jobs:
           id="$(gh api "users/${slug}%5Bbot%5D" --jq .id)"
           git config user.name "${slug}[bot]"
           git config user.email "${id}+${slug}[bot]@users.noreply.github.com"
+          # Also exposed as outputs: the Claude action re-runs git identity
+          # configuration itself and would otherwise reset these to its
+          # default claude[bot], undoing this step (see bot_name/bot_id on
+          # the action step below).
+          echo "name=${slug}[bot]" >> "$GITHUB_OUTPUT"
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
 
       # Read before the model runs, compared after. See the header note on
       # why the model's own account of what it posted is not evidence.
@@ -198,6 +205,12 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.bot.outputs.token || secrets.REVIEW_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          # The action configures git identity itself and defaults to
+          # claude[bot]; when the app token minted above is in play, the
+          # pushes must attribute to the app's own bot identity instead —
+          # machine work labeled as the machine that did it.
+          bot_name: ${{ steps.sign.outputs.name || 'claude[bot]' }}
+          bot_id: ${{ steps.sign.outputs.id || '41898282' }}
           prompt: |
             The `cross-vendor-review` gate has posted its findings on pull
             request #${{ github.event.issue.number }} in ${{ github.repository }}.
