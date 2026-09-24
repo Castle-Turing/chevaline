@@ -81,6 +81,11 @@ jobs:
       issues: write
       id-token: write
       actions: read
+      # gh pr checks reads check runs and commit statuses; an explicit
+      # permissions block sets everything omitted to none, which would
+      # 403 exactly the verification the fallback path depends on.
+      checks: read
+      statuses: read
     steps:
       - name: Check the commenter's permission and resolve the head branch
         id: pr
@@ -132,7 +137,12 @@ jobs:
       # when the checks did not re-run.
       - name: Mint the review bot's token
         id: bot
-        if: steps.pr.outputs.eligible == 'true' && vars.REVIEW_BOT_APP_CLIENT_ID != ''
+        # Both halves of the app credential, not just the variable: org
+        # variables and org secrets have independent repository access
+        # policies, and minting with the client id alone fails the job
+        # before checkout instead of falling through to the PAT/default
+        # token chain below.
+        if: steps.pr.outputs.eligible == 'true' && vars.REVIEW_BOT_APP_CLIENT_ID != '' && secrets.REVIEW_BOT_APP_KEY != ''
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ vars.REVIEW_BOT_APP_CLIENT_ID }}
