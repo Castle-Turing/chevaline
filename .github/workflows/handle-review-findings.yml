@@ -1,0 +1,274 @@
+# Handle review findings — the resident's default, copied into every repo.
+#
+# The canonical copy of this workflow lives in the Chevaline profile at
+# templates/handle-review-findings.yml; the contract it implements is
+# instructions/review.md. Change it there first, then copy outward — a repo
+# that edits its own copy has forked the default silently.
+#
+# What it does: when the `cross-vendor-review` gate posts its findings on a
+# pull request, Claude judges each one, fixes the valid ones on the branch,
+# and answers the rest in a single dispositions comment. Findings get
+# receipts before the human reads the PR.
+#
+# Loop prevention, by construction:
+#   - Triggers only on a comment carrying the gate's marker, which only the
+#     gate emits. Claude's own dispositions comment does not carry it, and
+#     the prompt forbids writing it.
+#   - The commenter's *effective repository permission* is queried and must
+#     be write or admin. `author_association` is not that check: on a public
+#     organization repository MEMBER includes org members with no access to
+#     this repository, and COLLABORATOR can be read or triage only. Either
+#     could otherwise paste the marker and spend the account's tokens.
+#   - Same-repo branches only: never runs with write access against a fork.
+#
+# The concurrency group discriminates on the marker, and never cancels. Both
+# halves matter, and every clause is scar tissue.
+#
+# Concurrency is evaluated before a job's `if:`, so a plain
+# pull-request-scoped group catches every unrelated comment. With
+# cancellation on, an ordinary comment kills the handler mid-flight —
+# castle-turing's predecessor of this workflow did exactly that and completed
+# none of its sixty runs. Turning cancellation off is necessary but not
+# sufficient: GitHub holds at most one *pending* run per group and a newer
+# run evicts the one waiting, so an ordinary comment could still discard a
+# queued handler.
+#
+# Keying by comment id alone fixes that and breaks something else: two gate
+# comments on one pull request then land in different groups, run at once,
+# and race to push to the same head, so one fails non-fast-forward and its
+# findings go unanswered. So the group is computed instead — gate comments
+# share one per-pull-request group and serialize; every other comment gets a
+# singleton group of its own and can neither cancel nor evict them.
+#
+# One residual limit, accepted knowingly: with a handler running and a second
+# already queued, a third gate comment evicts the queued one. That needs the
+# gate to have run three times on one pull request while a handler is still
+# working, and losing a queued run is a better failure than two handlers
+# pushing over each other.
+#
+# The receipt is verified against the forge, not against the model's account
+# of itself. The prompt below requires a dispositions comment; a prompt is not
+# a guarantee. Castle Turing's PR #73 is the precedent: the model reported
+# posting receipts it had never attempted, no call failed because no call was
+# made, and the job finished green with nothing to show. So the pull request's
+# comment count is read before the model runs and again after, and the job
+# fails if it did not grow. Known limit, stated rather than papered over: any
+# comment by anyone during the run satisfies the check. It catches "nothing
+# was posted", which is the observed failure; it does not authenticate the
+# author, and it is not a substitute for reading the receipt.
+name: Handle review findings
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: >-
+    ${{ contains(github.event.comment.body, '<!-- chevaline-gate: cross-vendor-review -->')
+        && format('review-findings-{0}', github.event.issue.number)
+        || format('review-findings-bystander-{0}', github.event.comment.id) }}
+  cancel-in-progress: false
+
+jobs:
+  handle:
+    if: |
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '<!-- chevaline-gate: cross-vendor-review -->')
+    runs-on: ubuntu-latest
+    env:
+      # The secrets context is not available inside `if:` expressions, so
+      # the mint step's condition tests this env value instead — env CAN
+      # be built from secrets, and the env context IS available to `if:`.
+      HAS_REVIEW_BOT_APP_KEY: ${{ secrets.REVIEW_BOT_APP_KEY != '' }}
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+      # gh pr checks reads check runs and commit statuses; an explicit
+      # permissions block sets everything omitted to none, which would
+      # 403 exactly the verification the fallback path depends on.
+      checks: read
+      statuses: read
+    steps:
+      - name: Check the commenter's permission and resolve the head branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # `eligible` is written only once, at the very end. Every earlier
+          # exit leaves it unset, which the steps below read as "do not run".
+
+          # Effective repository permission, not author_association: the
+          # latter says how someone relates to the org, not whether they can
+          # write here.
+          permission="$(gh api \
+            "repos/${{ github.repository }}/collaborators/${{ github.event.comment.user.login }}/permission" \
+            --jq .permission 2>/dev/null || echo none)"
+          case "$permission" in
+            admin|write|maintain) ;;
+            *)
+              echo "Commenter has '$permission' permission on this repository; declining to run." >&2
+              exit 0
+              ;;
+          esac
+
+          gh pr view "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
+            --json headRefName,headRepository,headRepositoryOwner \
+            > pr.json
+          head_repo="$(jq -r '.headRepositoryOwner.login + "/" + .headRepository.name' pr.json)"
+          if [ "$head_repo" != "${{ github.repository }}" ]; then
+            echo "Head branch lives in $head_repo, not ${{ github.repository }}: declining to run with write access against a fork." >&2
+            exit 0
+          fi
+
+          echo "ref=$(jq -r .headRefName pr.json)" >> "$GITHUB_OUTPUT"
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+
+      # Pushes made with the default GITHUB_TOKEN report no events: a fix
+      # pushed with it never re-runs the pull request's checks, so the human
+      # can be looking at a green tick that belongs to an older commit —
+      # emcee PR #84 merged a broken test exactly that way. The fix is a
+      # credential whose pushes do report events. First choice is the
+      # org's review-bot GitHub App: a token is minted per run (installation
+      # tokens live one hour — a handler that outruns that fails loudly at
+      # push), and the bot's own identity carries the pushes and comments,
+      # so the machine's hand stays visible. A repository without the app
+      # falls back to a REVIEW_BOT_TOKEN secret (a PAT) if it has one, then
+      # to the default token; the agent is told to say so in its comment
+      # when the checks did not re-run.
+      - name: Mint the review bot's token
+        id: bot
+        # Both halves of the app credential, not just the variable: org
+        # variables and org secrets have independent repository access
+        # policies, and minting with the client id alone fails the job
+        # before checkout instead of falling through to the PAT/default
+        # token chain below. The key's presence is tested via the job env
+        # above, because `if:` cannot read the secrets context directly.
+        if: steps.pr.outputs.eligible == 'true' && vars.REVIEW_BOT_APP_CLIENT_ID != '' && env.HAS_REVIEW_BOT_APP_KEY == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.REVIEW_BOT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.REVIEW_BOT_APP_KEY }}
+
+      - name: Checkout the pull request branch
+        if: steps.pr.outputs.eligible == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.ref }}
+          fetch-depth: 0
+          token: ${{ steps.bot.outputs.token || secrets.REVIEW_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+
+      # Commits should attribute to the same identity that pushes them.
+      # GitHub's convention for a bot committer is
+      # <user-id>+<app-slug>[bot]@users.noreply.github.com; the id is the
+      # bot user's, fetched rather than hardcoded so the template holds for
+      # any app name.
+      - name: Sign commits as the bot, not the operator
+        id: sign
+        if: steps.bot.outputs.token != ''
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+        run: |
+          set -euo pipefail
+          slug='${{ steps.bot.outputs.app-slug }}'
+          id="$(gh api "users/${slug}%5Bbot%5D" --jq .id)"
+          git config user.name "${slug}[bot]"
+          git config user.email "${id}+${slug}[bot]@users.noreply.github.com"
+          # Also exposed as outputs: the Claude action re-runs git identity
+          # configuration itself and would otherwise reset these to its
+          # default claude[bot], undoing this step (see bot_name/bot_id on
+          # the action step below).
+          echo "name=${slug}[bot]" >> "$GITHUB_OUTPUT"
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+
+      # Read before the model runs, compared after. See the header note on
+      # why the model's own account of what it posted is not evidence.
+      - name: Count the pull request's comments before the run
+        id: before
+        if: steps.pr.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          count="$(gh api "repos/${{ github.repository }}/issues/${{ github.event.issue.number }}" --jq .comments)"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "Comment count before the run: $count"
+
+      - name: Judge the findings, fix what is valid, answer the rest
+        if: steps.pr.outputs.eligible == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.bot.outputs.token || secrets.REVIEW_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          # The action configures git identity itself and defaults to
+          # claude[bot]; when the app token minted above is in play, the
+          # pushes must attribute to the app's own bot identity instead —
+          # machine work labeled as the machine that did it.
+          bot_name: ${{ steps.sign.outputs.name || 'claude[bot]' }}
+          bot_id: ${{ steps.sign.outputs.id || '41898282' }}
+          prompt: |
+            The `cross-vendor-review` gate has posted its findings on pull
+            request #${{ github.event.issue.number }} in ${{ github.repository }}.
+            You are checked out on that pull request's branch.
+
+            1. Read the findings:
+               gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}"
+               They arrive as one comment holding every finding, each tagged
+               [P1], [P2] or [P3] with a file and line. There are no inline
+               review threads to reply to.
+            2. Judge each finding on its merits — the reviewer is a different
+               vendor's model, it is right often and not always. For a valid
+               finding, implement the smallest correct fix, commit it, and
+               push to this branch. For one you disagree with, or that is out
+               of the pull request's scope, decide against it and say why.
+               Never silently skip a finding: a disagreement between reviewers
+               that the human cannot see is worse than either verdict.
+            3. Post exactly one comment on the pull request, listing every
+               finding in the order the review gave them, each with its
+               disposition — fixed, with the commit hash, or declined, with
+               the reasoning. That comment is the receipt; the human reads it
+               instead of re-deriving what happened.
+            4. If you pushed anything, check whether the pull request's own
+               checks ran against your commit
+               (gh pr checks ${{ github.event.issue.number }}). A push made
+               with the default workflow credential does not start them, and
+               a human reading a green tick that belongs to an older commit
+               is being misled. If they did not re-run, say so in your
+               comment, naming the commit that is unchecked.
+            5. Follow the repository's own CLAUDE.md or AGENTS.md throughout.
+
+            Hard rules:
+            - Never merge, close, approve, or request review on the pull
+              request. Every merge decision is the human's.
+            - Do not expand the diff beyond what the findings require. A
+              drive-by refactor in a fix commit is a defect.
+            - Never edit the gate's comment; dispositions go in your own.
+            - Never write the gate's marker string
+              (an HTML comment beginning "chevaline-gate") anywhere — in a
+              comment, a commit message or a file. It would re-trigger this
+              workflow against your own output.
+          claude_args: >-
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh api:*),Bash(nix:*)"
+
+      # Deliberately not `if: always()`. If the model step itself failed the
+      # job is already red and already reported; a second failure here would
+      # only bury the real one. This step exists for the case that step
+      # reports success.
+      - name: Confirm the dispositions comment actually landed
+        if: steps.pr.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          before='${{ steps.before.outputs.count }}'
+          after="$(gh api "repos/${{ github.repository }}/issues/${{ github.event.issue.number }}" --jq .comments)"
+          echo "Comment count before the run: $before; after: $after"
+          if [ "$after" -le "$before" ]; then
+            echo "::error::The run finished without posting a dispositions comment. Every finding in the gate's review is unanswered, and this job is failing so that fact is visible rather than green." >&2
+            exit 1
+          fi
