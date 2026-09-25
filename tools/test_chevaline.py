@@ -725,5 +725,103 @@ class TestCLI(unittest.TestCase):
         self.assertIn("Environments considered", result.stdout)
 
 
+PLUGIN_PROFILE = """
+spec = "0.3"
+
+[budget]
+on_exceed = "halt"
+limits = [ {{ scope = "*", window = "day", amount = 1, unit = "USD" }} ]
+
+[[plugins]]
+{entry}
+"""
+
+
+class TestPluginsValidation(unittest.TestCase):
+    GOOD_PIN = "e3ba2aa6f1e6f0bc4d69eb09c9f0d0a93af56156"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def errors_for(self, entry: str) -> list[str]:
+        write(self.dir / "chevaline.toml", PLUGIN_PROFILE.format(entry=entry))
+        errors, _warnings, _raw = ch.validate_profile(self.dir)
+        return errors
+
+    def test_valid_entry_passes(self):
+        errors = self.errors_for(
+            f'id = "ponytail"\nsource = "https://example.invalid/p"\npin = "{self.GOOD_PIN}"\n'
+            'harnesses = ["claude-code"]\ncompose = "layer"'
+        )
+        self.assertEqual(errors, [])
+
+    def test_missing_pin_is_an_error(self):
+        errors = self.errors_for('id = "p"\nsource = "https://example.invalid/p"')
+        self.assertTrue(any("pin" in e for e in errors), errors)
+
+    def test_short_pin_is_an_error(self):
+        errors = self.errors_for(
+            'id = "p"\nsource = "https://example.invalid/p"\npin = "e3ba2aa"'
+        )
+        self.assertTrue(any("40-hex" in e for e in errors), errors)
+
+    def test_missing_source_is_an_error(self):
+        errors = self.errors_for(f'id = "p"\npin = "{self.GOOD_PIN}"')
+        self.assertTrue(any("source" in e for e in errors), errors)
+
+    def test_duplicate_ids_are_an_error(self):
+        write(
+            self.dir / "chevaline.toml",
+            PLUGIN_PROFILE.format(
+                entry=f'id = "p"\nsource = "s"\npin = "{self.GOOD_PIN}"'
+            )
+            + f'\n[[plugins]]\nid = "p"\nsource = "s"\npin = "{self.GOOD_PIN}"\n',
+        )
+        errors, _warnings, _raw = ch.validate_profile(self.dir)
+        self.assertTrue(any("duplicate plugin id" in e for e in errors), errors)
+
+    def test_restrict_compose_is_rejected_for_additive_shape(self):
+        errors = self.errors_for(
+            f'id = "p"\nsource = "s"\npin = "{self.GOOD_PIN}"\ncompose = "restrict"'
+        )
+        self.assertTrue(any("not valid for this preference's shape" in e for e in errors), errors)
+
+    def test_path_escaping_ids_are_rejected(self):
+        for bad in ("../outside", "/tmp/abs", "a/b", ".", ".."):
+            errors = self.errors_for(
+                f'id = "{bad}"\nsource = "s"\npin = "{self.GOOD_PIN}"'
+            )
+            self.assertTrue(
+                any("single path component" in e for e in errors),
+                f"id {bad!r} was not rejected: {errors}",
+            )
+
+    def test_trailing_newline_in_pin_or_id_is_rejected(self):
+        errors = self.errors_for(
+            f'id = "p"\nsource = "s"\npin = """{self.GOOD_PIN}\n"""'
+        )
+        self.assertTrue(any(".pin" in e for e in errors), errors)
+        errors = self.errors_for(
+            f'id = """p\n"""\nsource = "s"\npin = "{self.GOOD_PIN}"'
+        )
+        self.assertTrue(any("single path component" in e for e in errors), errors)
+
+    def test_uppercase_pin_is_rejected_with_the_lowercase_rule(self):
+        errors = self.errors_for(
+            f'id = "p"\nsource = "s"\npin = "{self.GOOD_PIN.upper()}"'
+        )
+        self.assertTrue(any("lowercase" in e for e in errors), errors)
+
+    def test_harnesses_must_be_a_string_array(self):
+        errors = self.errors_for(
+            f'id = "p"\nsource = "s"\npin = "{self.GOOD_PIN}"\nharnesses = "claude-code"'
+        )
+        self.assertTrue(any("harnesses" in e for e in errors), errors)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -200,6 +200,7 @@ an RFC carries the redesign.
 | [0006](0006-profile-privacy.md) | Profiles are private by default | Draft |
 | [0007](0007-extensions-and-skills.md) | Extensions, Agent Skills, and the workflow boundary | Draft |
 | [0008](0008-effective-configuration.md) | Effective configuration and `profile.modify` | Draft |
+| [0009](0009-harness-plugins.md) | Harness plugins as a declared unit | Accepted |
 
 Gaps that are not yet proposals — MCP server declarations, a subagent
 roster, scheduling for unattended runs — remain in `SPEC.md` §5 until

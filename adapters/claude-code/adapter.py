@@ -42,6 +42,8 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -49,6 +51,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 
 import chevaline as ch  # noqa: E402
+import plugstore  # noqa: E402
 
 HARNESS_NAME = "claude-code"
 
@@ -431,11 +434,62 @@ def gates_section(effective: dict, profile_dir: Path) -> str | None:
     return "\n".join(lines) + "\n"
 
 
-def render_region(effective: dict, raw: dict, profile_dir: Path, report: Report) -> str:
+def plugins_section(
+    effective: dict, plugin_records: dict[str, dict] | None
+) -> str | None:
+    """The plugins prose for the CLAUDE.md region: the plugins this render
+    actually delivered, plus a standing launcher directive (SPEC §3.11). A
+    harness-level install never reaches an SDK-driven session — the SDK
+    loads plugins only through an explicit per-invocation option — so the
+    session reading this, in its role as launcher of such tools, is the
+    one place the declaration can take effect there.
+
+    Built from the render's own records, never from the declarations: a
+    declaration that was skipped (authority withheld, no packaging) or
+    failed has no checkout worth directing a launcher at, and prose
+    claiming otherwise would point sessions at paths that do not exist."""
+    records = plugin_records or {}
+    if not records and not applicable_plugins(effective):
+        return None
+    lines = ["# Plugins (declared policy)\n"]
+    if records:
+        lines.append(
+            "The profile declares harness plugins, installed from a pinned\n"
+            "checkout in the plugin store:\n"
+        )
+        for pid, rec in sorted(records.items()):
+            lines.append(f"- `{pid}` — pinned checkout: `{rec['checkout']}`")
+        lines.append(
+            "\nThis harness loads them through its own plugin config, but an\n"
+            "SDK-driven session does not: the Agent SDK loads plugins only\n"
+            "through an explicit per-invocation option. When launching a tool\n"
+            "that dispatches SDK sessions and accepts a plugin path (for\n"
+            "example an emcee `--plugin` flag or roster key, once present),\n"
+            "pass each checkout path above. If the option is left off, those\n"
+            "sessions run without the plugins this profile declares."
+        )
+    not_delivered = [p["id"] for p in applicable_plugins(effective) if p["id"] not in records]
+    if not_delivered:
+        names = ", ".join(f"`{n}`" for n in sorted(not_delivered))
+        lines.append(
+            f"\nDeclared but not installed by the last render: {names} — see\n"
+            "that render's report for why. Do not direct launchers at\n"
+            "checkouts this section does not list."
+        )
+    return "\n".join(lines) + "\n"
+
+
+def render_region(
+    effective: dict,
+    raw: dict,
+    profile_dir: Path,
+    report: Report,
+    plugin_records: dict[str, dict] | None = None,
+) -> str:
     """The text between the markers: concatenated instructions, the
     reporting half of any `reported` authority classes, the declared
-    budget as launcher-directive prose, then `run`-carrying gates as
-    standing prose."""
+    budget as launcher-directive prose, `run`-carrying gates as standing
+    prose, then declared plugins with their own launcher directive."""
     parts: list[str] = []
     resident = effective.get("resident", {})
     name = resident.get("name") if isinstance(resident, dict) else None
@@ -482,7 +536,27 @@ def render_region(effective: dict, raw: dict, profile_dir: Path, report: Report)
     if section is not None:
         parts.append(section)
 
+    section = plugins_section(effective, plugin_records)
+    if section is not None:
+        parts.append(section)
+
     return "\n".join(parts)
+
+
+def check_marker_integrity(existing: str | None) -> None:
+    """The abort half of splice_claude_md, callable before side effects."""
+    if existing is None:
+        return
+    begin = existing.find(BEGIN_MARKER)
+    end = existing.find(END_MARKER)
+    if begin == -1 and end == -1:
+        return
+    if begin == -1 or end == -1 or end < begin:
+        raise SystemExit(
+            "ERROR: ~/.claude/CLAUDE.md contains a damaged chevaline marker pair "
+            "(one marker missing, or end before begin). Refusing to guess at the "
+            "owned region — fix the markers by hand and re-render."
+        )
 
 
 def splice_claude_md(existing: str | None, region: str) -> str:
@@ -601,12 +675,73 @@ def delete_path_if_empty(obj: dict, dotted: str) -> None:
             del parent[key]
 
 
+def apply_enabled_plugins(
+    settings: dict, old_sidecar: dict, desired: list[str], report: Report
+) -> list[str]:
+    """Ensures `enabledPlugins` carries each desired identity as a literal
+    key, owned like everything else: only entries this adapter added are
+    ever removed, and a hand-written value wins. Identities are handled as
+    literal JSON keys — never as dotted paths — because a plugin id or a
+    marketplace name may legitimately contain a dot. Mutates `settings`;
+    returns the identities now owned."""
+    owned_before: list[str] = (old_sidecar.get("owned") or {}).get("enabledPlugins", [])
+    existing = settings.get("enabledPlugins")
+    if existing is not None and not isinstance(existing, dict):
+        # A hand-written non-object value is a conflict, not raw material:
+        # replacing it would clobber state this adapter never owned.
+        report.conflicts.append(
+            f"settings.json enabledPlugins is {type(existing).__name__}-shaped, "
+            "not an object — hand-written config wins (SPEC §4 item 3); fix it "
+            "by hand and re-render to let the profile enable plugins"
+        )
+        return []
+    table = dict(existing) if isinstance(existing, dict) else {}
+    new_owned: list[str] = []
+    for ident in sorted(set(owned_before) | set(desired)):
+        present = ident in table
+        current = table.get(ident)
+        ours = ident in owned_before
+        if ident not in desired:
+            if ours and present:
+                del table[ident]
+                report.rendered.append(
+                    f"settings.json enabledPlugins[{ident!r}]: removed (no longer in profile)"
+                )
+            continue
+        if present and not ours:
+            if current is True:
+                report.notes.append(
+                    f"settings.json enabledPlugins[{ident!r}]: already enabled by "
+                    "hand; not claiming ownership"
+                )
+            else:
+                report.conflicts.append(
+                    f"settings.json enabledPlugins[{ident!r}]: the profile wants it "
+                    "enabled, but the resident set it to a non-true value by hand — "
+                    "hand-written config wins (SPEC §4 item 3); remove the key and "
+                    "re-render to let the profile own it"
+                )
+            continue
+        if current is not True:
+            table[ident] = True
+            report.rendered.append(f"settings.json enabledPlugins[{ident!r}] = true")
+        new_owned.append(ident)
+    if table:
+        settings["enabledPlugins"] = table
+    else:
+        settings.pop("enabledPlugins", None)
+    return new_owned
+
+
 def apply_settings(
     settings: dict,
     sidecar: dict,
     list_entries: dict[str, list[str]],
     scalars: dict[str, Any],
     report: Report,
+    plugin_records: dict[str, dict] | None = None,
+    enabled_plugins: list[str] | None = None,
+    stale_marketplaces: list[str] | None = None,
 ) -> tuple[dict, dict]:
     """Pure function from (current settings, current sidecar, desires) to
     (new settings, new sidecar). Ownership rules in the module docstring."""
@@ -655,6 +790,7 @@ def apply_settings(
                     parent = parent.get(part, {})
                 if isinstance(parent, dict):
                     parent.pop(parts[-1], None)
+                delete_path_if_empty(settings, ".".join(parts[:-1]) or path)
                 report.rendered.append(f"settings.json {path}: removed (no longer in profile)")
             continue
         desired = scalars[path]
@@ -676,6 +812,8 @@ def apply_settings(
             report.rendered.append(f"settings.json {path} = {desired!r}")
         new_scalar_owned.append(path)
 
+    plugin_owned = apply_enabled_plugins(settings, sidecar, enabled_plugins or [], report)
+
     new_sidecar = {
         "_comment": (
             "Sidecar manifest for the Chevaline claude-code adapter (SPEC §4 "
@@ -686,9 +824,450 @@ def apply_settings(
         "owned": {
             "scalars": sorted(new_scalar_owned),
             "listEntries": {k: v for k, v in sorted(new_list_owned.items())},
+            "enabledPlugins": sorted(plugin_owned),
         },
     }
+    if plugin_records:
+        new_sidecar["plugins"] = {k: v for k, v in sorted(plugin_records.items())}
+    if stale_marketplaces:
+        new_sidecar["staleMarketplaces"] = sorted(set(stale_marketplaces))
     return settings, new_sidecar
+
+
+# --------------------------------------------------------------------------
+# Plugins (SPEC §3.11, §4.2)
+#
+# The claude-code surfaces used are the documented ones only: the plugin
+# store checkout is registered as a local marketplace through the stable
+# `claude plugin marketplace add` CLI (registration has no documented file
+# surface), and enablement is the documented `enabledPlugins` settings key,
+# written and owned through the same sidecar machinery as every other
+# scalar. The internal `~/.claude/plugins/` state files are never touched.
+#
+# Materializing a checkout is an `exec.install`-class action (§4.2): at
+# `approval` — including the unresolved case — nothing is fetched unless
+# the resident passed --allow-install for this invocation; at `reported`
+# the fetch happens and the report says so; at `silent` it just happens.
+# --------------------------------------------------------------------------
+
+
+def applicable_plugins(effective: dict) -> list[dict]:
+    out = []
+    for entry in effective.get("plugins", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        harnesses = entry.get("harnesses")
+        if harnesses is None or HARNESS_NAME in harnesses:
+            out.append(entry)
+    return out
+
+
+def install_authority(effective: dict) -> str:
+    """The resolved authority level for exec.install. Unresolved — no
+    action entry and no default — behaves as `approval` (SPEC §4.2)."""
+    auth = effective.get("authority", {})
+    if not isinstance(auth, dict):
+        return "approval"
+    actions = auth.get("actions", {})
+    level = actions.get("exec.install") if isinstance(actions, dict) else None
+    if level is None:
+        level = auth.get("default")
+    return level if level in ("silent", "reported", "approval") else "approval"
+
+
+def run_claude_cli(cli: str, claude_dir: Path, cli_args: list[str]) -> subprocess.CompletedProcess:
+    """Runs the documented `claude plugin ...` CLI against the render's
+    target config dir. CLAUDE_CONFIG_DIR keeps the CLI's writes and this
+    adapter's file writes pointed at the same directory."""
+    env = dict(os.environ)
+    env["CLAUDE_CONFIG_DIR"] = str(claude_dir)
+    return subprocess.run(
+        [cli, *cli_args], capture_output=True, text=True, env=env, timeout=120
+    )
+
+
+def render_plugins(
+    effective: dict,
+    args: argparse.Namespace,
+    profile_dir: Path,
+    claude_dir: Path,
+    old_sidecar: dict,
+    report: Report,
+) -> tuple[list[str], dict[str, dict], list[str], list[str]]:
+    """Returns (desired enabledPlugins identities, sidecar plugin records,
+    errors). Runs the store materialization and marketplace registration —
+    except under --dry-run, which only reports what would happen."""
+    identities: list[str] = []
+    records: dict[str, dict] = {}
+    errors: list[str] = []
+
+    declared = effective.get("plugins", []) or []
+    plugins = applicable_plugins(effective)
+    filtered = len(declared) - len(plugins)
+    if filtered:
+        report.notes.append(
+            f"plugins: {filtered} entr{'y' if filtered == 1 else 'ies'} filtered out by a "
+            f"`harnesses` key not naming {HARNESS_NAME}"
+        )
+    old_records: dict[str, dict] = (old_sidecar.get("plugins") or {})
+
+    level = install_authority(effective)
+    store = (
+        Path(args.plugin_store).expanduser().resolve()
+        if args.plugin_store
+        else plugstore.default_store()
+    )
+    # Marketplaces this render has already registered (or verified as
+    # ours), keyed by name → (checkout, pin). One marketplace may list
+    # several of the profile's plugins; the later declarations reuse the
+    # first registration's checkout instead of re-adding the same name —
+    # which the CLI would refuse as already existing — and a same-name
+    # marketplace at a DIFFERENT pin is a genuine conflict.
+    session_registered: dict[str, tuple[str, str]] = {}
+    # Marketplace names left behind by entries that moved to a different
+    # marketplace — this render's, plus any a previous render failed to
+    # remove (persisted in the sidecar so the retry survives the render
+    # that noticed the failure). Removed at the end, and only if nothing
+    # in the desired state still uses them.
+    stale_marketplaces: list[str] = [
+        m for m in (old_sidecar.get("staleMarketplaces") or []) if isinstance(m, str)
+    ]
+
+    for entry in plugins:
+        pid, pin = entry["id"], entry["pin"]
+        compose = entry.get("compose", "layer")
+        if compose != "layer":
+            # Native enablement is unconditional: it cannot express "only
+            # where the project has no plugin opinion" (defer) or "stop on
+            # a conflict" (insist), and project-opinion detection is out of
+            # scope for v0.3 (RFC 0005). Silently layering would override
+            # the declared mode, so these render nothing and say so.
+            report.skipped.append(
+                f"plugins.{pid} (compose={compose!r}) — native plugin enablement "
+                "is unconditional, and this adapter cannot detect a project's "
+                "own plugin opinion (RFC 0005), so a non-layer mode cannot be "
+                "honored natively; not rendered"
+            )
+            continue
+        source = plugstore.resolve_source(entry["source"], profile_dir)
+        checkout = plugstore.checkout_dir(store, pid, pin)
+        materialized = checkout.exists()
+
+        if not materialized and level == "approval" and not args.allow_install:
+            report.skipped.append(
+                f"plugins.{pid} — materializing {source} at {pin[:12]} is an "
+                "exec.install-class action and the resolved authority is "
+                "'approval' (or unresolved, which behaves the same, SPEC §4.2); "
+                "re-run with --allow-install to authorize this invocation"
+            )
+            continue
+
+        if not materialized and args.dry_run:
+            report.notes.append(
+                f"plugins.{pid}: DRY RUN — would materialize into {checkout}, "
+                "register it as a local marketplace via `claude plugin "
+                "marketplace add`, and enable it via the owned "
+                "`enabledPlugins` settings key"
+            )
+            prior = old_records.get(pid)
+            if prior:
+                # The plugin stays declared; the fetch was skipped only
+                # because this is a dry run. Feeding an empty projection
+                # into cleanup would report the prior registration as
+                # removed — a removal no real render would perform.
+                identities.append(prior["identity"])
+                records[pid] = prior
+                report.notes.append(
+                    f"plugins.{pid}: DRY RUN — post-fetch state unknown; the "
+                    "projection retains the prior registration"
+                )
+            continue
+
+        # Runs for existing checkouts too: materialize is offline and
+        # idempotent there, and it is the only place the checkout's HEAD is
+        # verified against the pin (SPEC §4.2) — a stale or tampered store
+        # entry must not be registered just because its directory exists.
+        try:
+            checkout, fetched = plugstore.materialize(pid, source, pin, store)
+        except plugstore.PlugstoreError as e:
+            errors.append(f"plugins.{pid}: {e}")
+            continue
+        if fetched:
+            verb = {
+                "silent": "materialized",
+                "reported": "materialized (exec.install is 'reported': saying so)",
+                "approval": "materialized (exec.install is 'approval'; authorized by --allow-install)",
+            }[level]
+            report.rendered.append(f"plugins.{pid}: {verb} {source} @ {pin[:12]} → {checkout}")
+
+        # From here the checkout exists, so the desired state is computable
+        # in a dry run too — only the CLI actions stay behind the dry-run
+        # guard. A dry run that dropped the desired records here would then
+        # report removals a real render would never perform.
+        mkt_path = checkout / ".claude-plugin" / "marketplace.json"
+        real_checkout = checkout.resolve()
+        if mkt_path.is_file():
+            resolved_mkt = mkt_path.resolve()
+            if not (resolved_mkt.is_file() and resolved_mkt.is_relative_to(real_checkout)):
+                errors.append(
+                    f"plugins.{pid}: marketplace.json resolves outside the pinned "
+                    "checkout — registering metadata the pin never verified is "
+                    "refused (SPEC §4.2)"
+                )
+                continue
+        if not mkt_path.is_file():
+            report.skipped.append(
+                f"plugins.{pid} — the checkout has no .claude-plugin/marketplace.json, "
+                "so there is no claude-code packaging to register; the entry lists "
+                f"{HARNESS_NAME} (or lists no harnesses), which looks like a mismatch "
+                "with what the plugin repo actually ships (SPEC §4.2)"
+            )
+            continue
+        try:
+            mkt = json.loads(mkt_path.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            errors.append(f"plugins.{pid}: unreadable marketplace.json ({e})")
+            continue
+        if not isinstance(mkt, dict) or not isinstance(mkt.get("plugins", []), list):
+            errors.append(
+                f"plugins.{pid}: marketplace.json is valid JSON but not marketplace-"
+                "shaped (object with a `plugins` array); refusing to guess"
+            )
+            continue
+        mkt_name = mkt.get("name")
+        matched = next(
+            (p for p in mkt.get("plugins", []) if isinstance(p, dict) and p.get("name") == pid),
+            None,
+        )
+        if not isinstance(mkt_name, str) or matched is None:
+            report.skipped.append(
+                f"plugins.{pid} — the checkout's marketplace.json does not list a "
+                f"plugin named '{pid}' (marketplace {mkt_name!r}); the profile id "
+                "must match the plugin's own name for the enablement key to mean "
+                "anything"
+            )
+            continue
+        # The matched entry's own source must resolve inside the pinned
+        # checkout. A marketplace may point a plugin at a remote or at a
+        # path outside the checkout; enabling that would execute content
+        # the pin never covered — the exact thing the pin exists to prevent.
+        plugin_src = matched.get("source")
+        src_ok = (
+            isinstance(plugin_src, str)
+            and "://" not in plugin_src
+            and not Path(plugin_src).is_absolute()
+        )
+        if src_ok:
+            # Real paths, not lexical ones: a tracked symlink can point
+            # outside the checkout while normpath stays inside it.
+            resolved = (checkout / plugin_src).resolve()
+            src_ok = resolved == real_checkout or resolved.is_relative_to(real_checkout)
+        if not src_ok:
+            errors.append(
+                f"plugins.{pid}: the marketplace entry's source {plugin_src!r} "
+                "points outside the pinned checkout, so enabling it would "
+                "execute content the pin never verified (SPEC §4.2); refusing"
+            )
+            continue
+        identity = f"{pid}@{mkt_name}"
+
+        prior = old_records.get(pid)
+        up_to_date = bool(
+            prior
+            and prior.get("marketplace") == mkt_name
+            and prior.get("pin") == pin
+            and prior.get("checkout") == str(checkout)
+        )
+        session_hit = session_registered.get(mkt_name)
+        if session_hit is not None and session_hit[1] != pin:
+            errors.append(
+                f"plugins.{pid}: marketplace '{mkt_name}' was registered earlier "
+                f"in this render at pin {session_hit[1][:12]}, but this entry "
+                f"declares pin {pin[:12]} — one marketplace name cannot point at "
+                "two pins; refusing"
+            )
+            continue
+        if session_hit is not None:
+            # Same marketplace, same pin, registered earlier this render:
+            # reuse that registration's checkout for this plugin's record
+            # and enablement rather than re-adding the name.
+            checkout = Path(session_hit[0])
+            report.notes.append(
+                f"plugins.{pid}: marketplace '{mkt_name}' already registered "
+                "this render; reusing it"
+            )
+        elif args.dry_run and up_to_date:
+            report.notes.append(
+                f"plugins.{pid}: registration recorded; a real render verifies "
+                "it against the CLI"
+            )
+        elif args.dry_run:
+            report.notes.append(
+                f"plugins.{pid}: DRY RUN — would register local marketplace "
+                f"'{mkt_name}' → {checkout} and enable '{identity}'"
+            )
+        else:
+            try:
+                # Reaching here with a prior record means the pin, checkout
+                # location, or marketplace changed. A prior registration
+                # under the SAME name must be removed now so the re-add can
+                # claim the name; a prior registration under a DIFFERENT
+                # name may still be needed by another entry, so its removal
+                # is deferred until every desired registration is known.
+                prior_changed = prior is not None and (
+                    prior.get("pin") != pin or prior.get("checkout") != str(checkout)
+                )
+                if prior and prior.get("marketplace") == mkt_name and prior_changed:
+                    removal = run_claude_cli(
+                        args.claude_cli, claude_dir,
+                        ["plugin", "marketplace", "remove", prior["marketplace"]],
+                    )
+                    if removal.returncode != 0:
+                        report.notes.append(
+                            f"plugins.{pid}: could not remove the old marketplace "
+                            f"registration before re-registering ({(removal.stderr or removal.stdout).strip()}); "
+                            "continuing with the add"
+                        )
+                elif prior and prior.get("marketplace"):
+                    stale_marketplaces.append(prior["marketplace"])
+                added = run_claude_cli(
+                    args.claude_cli, claude_dir,
+                    ["plugin", "marketplace", "add", str(checkout)],
+                )
+            except (OSError, subprocess.SubprocessError) as e:
+                errors.append(
+                    f"plugins.{pid}: could not run the `{args.claude_cli}` CLI ({e}) — "
+                    "marketplace registration has no documented file surface, so this "
+                    "adapter cannot register the plugin without it"
+                )
+                continue
+            output = ((added.stderr or "") + (added.stdout or "")).lower()
+            if added.returncode == 0 and up_to_date:
+                # Observed against the real CLI: re-adding a present local
+                # marketplace also exits 0, so success does not distinguish
+                # "was present" from "was missing and is now restored" —
+                # the note claims only what the exit code proves.
+                report.notes.append(
+                    f"plugins.{pid}: registration ensured via the CLI (present "
+                    "and restored are indistinguishable from its success)"
+                )
+            if added.returncode != 0:
+                # "Already exists" is only success if the existing
+                # registration is the one this adapter recorded for this
+                # exact checkout — for an unchanged prior, that answer IS
+                # the per-render verification succeeding. A same-named
+                # marketplace the resident registered by hand — or a stale
+                # one left by a failed re-pin removal — must surface as a
+                # conflict, not be silently adopted (and later removed) as
+                # ours. A registration the resident repointed by hand
+                # cannot be distinguished through documented surfaces; the
+                # resident's own /plugin action stands, per hand-written-
+                # wins.
+                ours_already = (
+                    "already" in output
+                    and prior is not None
+                    and prior.get("marketplace") == mkt_name
+                    and prior.get("checkout") == str(checkout)
+                )
+                if ours_already:
+                    report.notes.append(
+                        f"plugins.{pid}: registration verified present"
+                    )
+                if not ours_already:
+                    errors.append(
+                        f"plugins.{pid}: `claude plugin marketplace add {checkout}` "
+                        f"failed: {(added.stderr or added.stdout).strip()}"
+                        + (
+                            " — a marketplace with this name already exists and is "
+                            "not one this adapter registered for this checkout; "
+                            "resolve the collision by hand (/plugin) and re-render"
+                            if "already" in output
+                            else ""
+                        )
+                    )
+                    continue
+            session_registered[mkt_name] = (str(checkout), pin)
+            if not up_to_date:
+                report.rendered.append(
+                    f"plugins.{pid}: registered local marketplace '{mkt_name}' → {checkout}"
+                )
+
+        identities.append(identity)
+        records[pid] = {
+            "identity": identity,
+            "marketplace": mkt_name,
+            "checkout": str(checkout),
+            "pin": pin,
+            "source": source,
+        }
+
+    # Plugins the profile no longer declares (or no longer aims at this
+    # harness): their enabledPlugins entry un-renders through the ordinary
+    # ownership path; the marketplace registration is removed here. Stale
+    # names from re-registrations join the same still-in-use check.
+    live_marketplaces = {
+        r["marketplace"] for r in records.values() if not r.get("pendingRemoval")
+    }
+
+    def _remove_marketplace(mkt: str) -> bool:
+        """One documented removal attempt; True on success."""
+        try:
+            removal = run_claude_cli(
+                args.claude_cli, claude_dir,
+                ["plugin", "marketplace", "remove", mkt],
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            report.notes.append(
+                f"plugins: could not run the CLI to remove marketplace "
+                f"'{mkt}' ({e}); kept for retry on the next render"
+            )
+            return False
+        if removal.returncode != 0:
+            report.notes.append(
+                f"plugins: `claude plugin marketplace remove {mkt}` failed "
+                f"({(removal.stderr or removal.stdout).strip()}); kept for retry "
+                "on the next render"
+            )
+            return False
+        return True
+
+    # Every marketplace due for removal — from moved entries (this render
+    # or persisted from a failed earlier one) and from dropped plugins —
+    # is attempted exactly ONCE, and the one result applies to every
+    # record that referenced it: a second per-record attempt would read an
+    # already-absent answer as a failure and retry forever.
+    dropped = {
+        pid: rec for pid, rec in old_records.items() if pid not in records
+    }
+    due = {m for m in stale_marketplaces if m not in live_marketplaces}
+    for rec in dropped.values():
+        m = rec.get("marketplace")
+        if m and m not in live_marketplaces:
+            due.add(m)
+
+    failed_marketplaces: set[str] = set()
+    if not args.dry_run:
+        for mkt_name in sorted(due):
+            if not _remove_marketplace(mkt_name):
+                failed_marketplaces.add(mkt_name)
+
+    for pid, rec in sorted(dropped.items()):
+        if args.dry_run:
+            report.notes.append(f"plugins.{pid}: DRY RUN — would remove (no longer in profile)")
+            records[pid] = rec  # keep the record; nothing was actually removed
+            continue
+        mkt_name = rec.get("marketplace")
+        if mkt_name and mkt_name in failed_marketplaces:
+            records[pid] = {**rec, "pendingRemoval": True}
+            continue
+        report.rendered.append(f"plugins.{pid}: removed (no longer in profile)")
+
+    stale_failed = sorted(
+        failed_marketplaces
+        - {r.get("marketplace") for r in records.values() if r.get("pendingRemoval")}
+    ) if not args.dry_run else sorted(set(stale_marketplaces))
+
+    return identities, records, stale_failed, errors
 
 
 # --------------------------------------------------------------------------
@@ -756,7 +1335,9 @@ def report_unrenderable(effective: dict, explain: dict, report: Report) -> None:
     # environment matching cannot leak into it. `gates` IS here: its
     # section renders from the resolved config (see gates_section), so an
     # environment that replaces the gates array leaks into global prose.
-    rendered_prefixes = ("instructions", "authority", "models", "resident", "gates")
+    rendered_prefixes = (
+        "instructions", "authority", "models", "resident", "gates", "plugins",
+    )
     contaminated = {
         env for path, env in explain.get("sources", {}).items()
         if path.startswith(rendered_prefixes)
@@ -804,13 +1385,86 @@ def cmd_render(args: argparse.Namespace) -> int:
     report = Report()
     report.environments = explain["environments"]
 
-    # CLAUDE.md. The budget section renders from the raw manifest —
-    # resolve_profile strips [[environment]] out of `effective`, and the
-    # declared overrides must appear regardless of what matched here.
-    raw, _ = ch.load_manifest(profile_dir)
-    region = render_region(effective, raw or {}, profile_dir, report)
+    # settings.json + sidecar are read (and settings parsed) BEFORE the
+    # plugins phase: a malformed settings.json must abort the render before
+    # any store fetch or marketplace CLI call mutates native state, and the
+    # sidecar's records are what plugin idempotence and un-render consult.
+    settings_path = claude_dir / "settings.json"
+    sidecar_path = claude_dir / SIDECAR_NAME
+    try:
+        settings = json.loads(settings_path.read_text()) if settings_path.is_file() else {}
+    except json.JSONDecodeError as e:
+        print(f"ERROR: {settings_path} is not valid JSON ({e}); refusing to touch it.", file=sys.stderr)
+        return 1
+    if not isinstance(settings, dict):
+        print(
+            f"ERROR: {settings_path} is valid JSON but not an object; refusing "
+            "to touch it (checked before any plugin side effect).",
+            file=sys.stderr,
+        )
+        return 1
+    sidecar = json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
+
+    # The existing CLAUDE.md's marker pair is validated before any plugin
+    # side effect: a damaged pair aborts the render, and an abort after a
+    # clone or a marketplace registration would leave native state the
+    # sidecar never recorded.
     md_path = claude_dir / "CLAUDE.md"
     existing_md = md_path.read_text() if md_path.is_file() else None
+    check_marker_integrity(existing_md)
+
+    # Instruction inputs preflight for the same reason: render_region reads
+    # them after the plugins phase, and a missing `path` key, a directory,
+    # or an unreadable file would otherwise abort the render with a
+    # marketplace registration already made and no sidecar record of it.
+    for i, entry in enumerate(applicable_instructions(effective)):
+        rel = entry.get("path")
+        target = profile_dir / rel if isinstance(rel, str) else None
+        try:
+            readable = target is not None and target.is_file()
+            if readable:
+                target.read_text()
+        except OSError:
+            readable = False
+        if not readable:
+            print(
+                f"ERROR: instructions[{i}].path {rel!r} is missing, not a file, "
+                "or unreadable; nothing rendered (checked before any plugin "
+                "side effect).",
+                file=sys.stderr,
+            )
+            return 1
+
+    plugin_identities, plugin_records, stale_failed, plugin_errors = render_plugins(
+        effective, args, profile_dir, claude_dir, sidecar, report
+    )
+
+    # CLAUDE.md, after the plugins phase so the region's plugins section
+    # states only what this render actually delivered. The budget section
+    # renders from the raw manifest — resolve_profile strips
+    # [[environment]] out of `effective`, and the declared overrides must
+    # appear regardless of what matched here.
+    # The region's plugins prose claims native loading, so it is built
+    # from the PROJECTED enablement — a registered checkout whose
+    # enablement apply_enabled_plugins will decline (hand-written false or
+    # a non-object table) must not be presented as loaded.
+    projected = set(
+        apply_enabled_plugins(copy.deepcopy(settings), sidecar, plugin_identities, Report())
+    )
+    hand_table = settings.get("enabledPlugins")
+    if isinstance(hand_table, dict):
+        # A hand-enabled identity is loaded even though it is not ours to
+        # own; the prose describes what loads, not what is owned.
+        projected |= {i for i in plugin_identities if hand_table.get(i) is True}
+    prose_records = {
+        pid: rec for pid, rec in plugin_records.items()
+        if rec.get("identity") in projected
+    }
+
+    raw, _ = ch.load_manifest(profile_dir)
+    region = render_region(
+        effective, raw or {}, profile_dir, report, plugin_records=prose_records
+    )
     new_md = splice_claude_md(existing_md, region)
     if new_md != (existing_md or ""):
         report.rendered.append(
@@ -821,34 +1475,29 @@ def cmd_render(args: argparse.Namespace) -> int:
     else:
         report.notes.append(f"{md_path}: already up to date")
 
-    # settings.json + sidecar
-    settings_path = claude_dir / "settings.json"
-    sidecar_path = claude_dir / SIDECAR_NAME
-    try:
-        settings = json.loads(settings_path.read_text()) if settings_path.is_file() else {}
-    except json.JSONDecodeError as e:
-        print(f"ERROR: {settings_path} is not valid JSON ({e}); refusing to touch it.", file=sys.stderr)
-        return 1
-    sidecar = json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
-
     list_entries, scalars = desired_settings(effective, report)
-    new_settings, new_sidecar = apply_settings(settings, sidecar, list_entries, scalars, report)
+    new_settings, new_sidecar = apply_settings(
+        settings, sidecar, list_entries, scalars, report,
+        plugin_records, plugin_identities, stale_failed,
+    )
 
     report_unrenderable(effective, explain, report)
+    for e in plugin_errors:
+        report.unenforced.append(f"PLUGIN ERROR: {e}")
 
     if args.dry_run:
         report.notes.append("DRY RUN: nothing was written.")
         report.print()
-        return 0
+        return 1 if plugin_errors else 0
 
     claude_dir.mkdir(parents=True, exist_ok=True)
     if new_md != (existing_md or ""):
         md_path.write_text(new_md)
-    if new_settings != settings or not sidecar_path.is_file():
+    if new_settings != settings or new_sidecar != sidecar or not sidecar_path.is_file():
         settings_path.write_text(json.dumps(new_settings, indent=2) + "\n")
         sidecar_path.write_text(json.dumps(new_sidecar, indent=2) + "\n")
     report.print()
-    return 0
+    return 1 if plugin_errors else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -858,6 +1507,25 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("profile_dir", help="Path to the Chevaline profile directory")
     p.add_argument("--claude-dir", default="~/.claude", help="Claude Code config dir (default ~/.claude)")
     p.add_argument("--dry-run", action="store_true", help="Report without writing")
+    p.add_argument(
+        "--allow-install",
+        action="store_true",
+        help=(
+            "Authorize exec.install-class plugin materialization for this "
+            "invocation (SPEC §4.2) — required when the profile's resolved "
+            "authority for exec.install is 'approval' or unresolved"
+        ),
+    )
+    p.add_argument(
+        "--plugin-store",
+        default=None,
+        help="Override the plugin store directory (default: $XDG_DATA_HOME/chevaline/plugins)",
+    )
+    p.add_argument(
+        "--claude-cli",
+        default="claude",
+        help="The claude CLI to use for plugin marketplace registration (default: claude)",
+    )
     p.add_argument("--cwd", default=None, help="Context cwd for `path` selectors")
     p.add_argument("--hostname", default=None, help="Context hostname for `hostname` selectors")
     p.add_argument("--git-org", dest="git_org", default=None, help="Context git org for `git_org` selectors")

@@ -42,6 +42,7 @@ Non-clobbering consequences, all tested in `test_adapter.py`:
 | `[[environment]]` | Resolved before rendering, never rendered; the report names what matched and why |
 | `[budget]` | `CLAUDE.md` prose: declared limits plus a standing launcher directive — **still reported as NOT ENFORCED** (see below) |
 | `[[gates]]` | `CLAUDE.md` prose for gates carrying a `run` script: the declaration plus a standing directive conditioned on the gate's `compose` mode, with the path resolved against the profile root — **still reported as skipped**, because nothing fires it (see below). A gate without `run` renders nothing and is reported unsatisfied |
+| `[[plugins]]` | Plugin store checkout + `claude plugin marketplace add` + an owned `enabledPlugins` entry in `settings.json` (see below) |
 | `[sessions]`, `[[extensions]]` | No settled surface; reported as skipped |
 
 ### Authority
@@ -173,6 +174,39 @@ environment overrides gates only by replacing the whole array (SPEC
 declaratively. An environment that does contribute to the gates array
 makes the render context-dependent, and the report flags it as such (see
 below).
+
+### Plugins
+
+Each applicable `[[plugins]]` entry renders in three moves, all against
+documented Claude Code surfaces (SPEC §3.11, §4.2):
+
+1. **Materialize** the pinned checkout into the shared plugin store
+   (`$XDG_DATA_HOME/chevaline/plugins/<id>/<pin>`; `--plugin-store`
+   overrides). This is an `exec.install`-class action: when the resolved
+   authority for `exec.install` is `approval` — or unresolved — nothing
+   is fetched unless the invocation carries `--allow-install`. A store
+   entry already at the pin is used as is, offline.
+2. **Register** the checkout as a local marketplace via
+   `claude plugin marketplace add` (`--claude-cli` overrides the binary;
+   the CLI runs with `CLAUDE_CONFIG_DIR` pointed at `--claude-dir`, so
+   its writes and this adapter's land in the same place). Registration
+   is the one step with no documented file surface, which is why it goes
+   through the CLI; the internal `~/.claude/plugins/` state files are
+   never written directly.
+3. **Enable** through the documented `enabledPlugins` settings key —
+   `"<id>@<marketplace>": true` — with the identity handled as a literal
+   JSON key (ids and marketplace names may contain dots, so dotted-path
+   machinery is deliberately not used) and owned in the sidecar, so a
+   hand-written entry is never clobbered and dropping the plugin from
+   the profile un-renders exactly what the adapter owned. The sidecar also records the
+   checkout, pin, and marketplace per plugin, which is what makes
+   re-renders idempotent (no CLI calls when nothing changed) and lets a
+   dropped plugin's marketplace registration be removed.
+
+A checkout with no `.claude-plugin/marketplace.json`, or whose
+marketplace does not list a plugin named by the entry's `id`, is
+reported and skipped — the profile said this harness, the repo doesn't
+carry packaging for it, and guessing is worse than saying so.
 
 ### Environments and a global render
 

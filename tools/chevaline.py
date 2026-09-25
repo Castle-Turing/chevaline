@@ -94,7 +94,18 @@ BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 # never present in an *effective* (resolved) config — it is consumed during
 # resolution, not rendered — so it deliberately does not appear here; see
 # resolve_profile, which strips "environment" out of `effective` up front.
-ARRAY_OF_TABLES_KEYS = {"instructions", "gates", "extensions"}
+ARRAY_OF_TABLES_KEYS = {"instructions", "gates", "extensions", "plugins"}
+
+# SPEC §3.11: a plugin's `pin` is the full 40-hex commit, nothing shorter
+# or symbolic — a short sha can go ambiguous and a ref can move, and a
+# plugin executes code inside every session.
+PLUGIN_PIN = re.compile(r"^[0-9a-f]{40}\Z")
+
+# A plugin `id` is a single path component: it names the checkout's
+# directory inside the plugin store, so separators, dot components, and
+# anything absolute would let a profile escape the store. Must start with
+# an alphanumeric, which also rules out "." and "..".
+PLUGIN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
 # --------------------------------------------------------------------------
@@ -307,6 +318,58 @@ def validate_authority_table(
             )
 
 
+def validate_plugins_array(group: dict, ctx_prefix: str, errors: list[str]) -> None:
+    """SPEC §3.11: [[plugins]] entries need `id` (unique within the array),
+    `source`, and a full-40-hex `pin`. `harnesses` is an optional array of
+    strings; `compose` is checked by validate_array_item_compose alongside
+    the other additive sections.
+    """
+    entries = group.get("plugins")
+    if entries is None:
+        return
+    if not isinstance(entries, list):
+        errors.append(f"{ctx_prefix}plugins must be an array of tables `[[plugins]]`")
+        return
+    seen_ids: set[str] = set()
+    for i, entry in enumerate(entries):
+        ctx = f"{ctx_prefix}plugins[{i}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{ctx} must be a table")
+            continue
+        plugin_id = entry.get("id")
+        if not isinstance(plugin_id, str) or not plugin_id:
+            errors.append(f"{ctx} is missing required field 'id' (SPEC §3.11)")
+        elif not PLUGIN_ID.match(plugin_id):
+            errors.append(
+                f"{ctx}.id {plugin_id!r} must be a single path component "
+                "(alphanumeric start; letters, digits, '.', '_', '-') — it names "
+                "the checkout's directory inside the plugin store, and a "
+                "separator or dot component would escape it"
+            )
+        elif plugin_id in seen_ids:
+            errors.append(f"{ctx}: duplicate plugin id '{plugin_id}' — ids must be unique")
+        else:
+            seen_ids.add(plugin_id)
+        source = entry.get("source")
+        if not isinstance(source, str) or not source:
+            errors.append(f"{ctx} is missing required field 'source' (SPEC §3.11)")
+        pin = entry.get("pin")
+        if not isinstance(pin, str) or not PLUGIN_PIN.match(pin):
+            errors.append(
+                f"{ctx}.pin must be a full 40-hex commit in lowercase "
+                f"(SPEC §3.11: nothing shorter or symbolic — a plugin executes "
+                f"code inside every session; git prints object ids lowercase "
+                f"and this spec requires that spelling so no layer has to "
+                f"normalize), got {pin!r}"
+            )
+        harnesses = entry.get("harnesses")
+        if harnesses is not None and (
+            not isinstance(harnesses, list)
+            or not all(isinstance(h, str) for h in harnesses)
+        ):
+            errors.append(f"{ctx}.harnesses must be an array of strings")
+
+
 def validate_array_item_compose(
     group: dict, key: str, valid_modes: set[str], ctx_path_prefix: str, errors: list[str]
 ) -> None:
@@ -371,6 +434,8 @@ def validate_common_sections(
         validate_sessions_table(group["sessions"], f"{label}sessions", errors)
     validate_array_item_compose(group, "gates", ADDITIVE_COMPOSE_MODES, label, errors)
     validate_array_item_compose(group, "extensions", ADDITIVE_COMPOSE_MODES, label, errors)
+    validate_array_item_compose(group, "plugins", ADDITIVE_COMPOSE_MODES, label, errors)
+    validate_plugins_array(group, label, errors)
     validate_referenced_paths(group, profile_dir, label.rstrip("."), errors)
 
 
